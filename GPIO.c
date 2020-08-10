@@ -75,45 +75,43 @@ uint32_t gettime_ms(void) {
 //
 //
 //CBFunc_t updateButtons()
-CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick){
+CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick, void *but){
 	uint32_t now;
 //	now = gettime_ms();
-	struct button *button = buttons;
+	struct button *button = but;
 
 	if ( level > 1 )
 		return NULL;
 
-	for (; button < buttons + numberofbuttons; button++) {
-		if (button->pin == pin) {
-			bool bit = (level == 0)? 0 : 1;
-			now = tick / 1000;
-			bool presstype;
-			logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
+	if (button->pin == pin) {
+		bool bit = (level == 0)? 0 : 1;
+		now = tick / 1000;
+		bool presstype;
+		logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
 
-			int increment = 0;
-			if ( (bit == button->pressed) && (button->timepressed == 0) ){	
-				button->timepressed = now;
+		int increment = 0;
+		if ( (bit == button->pressed) && (button->timepressed == 0) ){	
+			button->timepressed = now;
+			increment = 0;
+		} else if (button->timepressed != 0){	
+			if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
+				logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
 				increment = 0;
-			} else if (button->timepressed != 0){	
-				if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
-					logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
-					increment = 0;
-				} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
-					loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = LONGPRESS;
-					increment = 1;
-				} else {
-					loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = SHORTPRESS;
-					increment = 1;
-				}
-				button->timepressed = 0;
+			} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
+				loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
+				button->value = bit;
+				presstype = LONGPRESS;
+				increment = 1;
+			} else {
+				loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
+				button->value = bit;
+				presstype = SHORTPRESS;
+				increment = 1;
 			}
-			if (button->callback && increment)
-				button->callback(button, increment, presstype);
+			button->timepressed = 0;
 		}
+		if (button->callback && increment)
+			button->callback(button, increment, presstype);
 	}
 	return NULL;
 }
@@ -154,7 +152,7 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
     set_mode( pi,  pin, PI_INPUT);
     set_pull_up_down(pi, pin, resist);
     set_glitch_filter(pi, pin, 50000);
-    newbutton->cb_id = callback(pi, (unsigned) pin, (unsigned)edge, (CBFunc_t)updateButtons);
+    newbutton->cb_id = callback_ex(pi, (unsigned) pin, (unsigned)edge, (CBFunc_t)updateButtons, newbutton);
 
     return newbutton;
 }
