@@ -75,13 +75,13 @@ uint32_t gettime_ms(void) {
 //
 //
 //CBFunc_t updateButtons()
-CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick, void *but){
+static void  updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick, void *but){
 	uint32_t now;
 //	now = gettime_ms();
 	struct button *button = but;
 
 	if ( level > 1 )
-		return NULL;
+		return;
 
 	if (button->pin == pin) {
 		bool bit = (level == 0)? 0 : 1;
@@ -113,7 +113,6 @@ CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick, vo
 		if (button->callback && increment)
 			button->callback(button, increment, presstype);
 	}
-	return NULL;
 }
 
 //
@@ -152,7 +151,7 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
     set_mode( pi,  pin, PI_INPUT);
     set_pull_up_down(pi, pin, resist);
     set_glitch_filter(pi, pin, 50000);
-    newbutton->cb_id = callback_ex(pi, (unsigned) pin, (unsigned)edge, (CBFunc_t)updateButtons, newbutton);
+    newbutton->cb_id = callback_ex(pi, (unsigned) pin, (unsigned)edge, (CBFuncEx_t)updateButtons, newbutton);
 
     return newbutton;
 }
