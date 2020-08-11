@@ -70,7 +70,7 @@ struct button;
 //  Note: change might be "0" indicating no change, this happens when buttons chatter
 //  Value in struct already updated.
 //
-typedef void (*button_callback_t)(const struct button * button, int change, bool presstype);
+typedef void (*button_callback_t)(int pressed_idx, bool presstype);
 
 struct button {
     int pi;
@@ -81,6 +81,7 @@ struct button {
     bool pressed;
     int long_press_time;
     int cb_id;
+	int b_ctrl_idx;
 };
 
 //
@@ -92,8 +93,9 @@ struct button {
 //  Parameters:
 //      pin: GPIO-Pin used in BCM numbering scheme
 //      callback: callback function to be called when button state changed
-//      edge: edge to be used for trigger events,
-//            one of INT_EDGE_RISING, INT_EDGE_FALLING or INT_EDGE_BOTH (the default)
+//      pressed: Optional GPIO pinstate for button to read pressed
+//           0 - state is 0 (default)
+//           1 - state is 1
 //  Returns: pointer to the new button structure
 //           The pointer will be NULL is the function failed for any reason
 //
@@ -103,7 +105,8 @@ struct button *setupbutton(int pi,
                            button_callback_t b_callback,
                            int resist,
                            bool pressed,
-                           int long_press_time);
+                           int long_press_time,
+						   int button_idx);
 
 struct encoder;
 

@@ -67,10 +67,9 @@ struct button_ctrl
 //          Command type SCRIPT.
 //                  SCRIPT:/path/to/shell/script.sh
 //      pin: the GPIO-Pin-Number
-//      edge: one of
-//                  1 - falling edge
-//                  2 - rising edge
-//                  0, 3 - both
+//      pressed: GPIO pinstate for button to read pressed
+//                0 - state is 0 (default)
+//                1 - state is 1
 //
 int setup_button_ctrl( int pi, char * cmd, int pin, int resist, int pressed, char * cmd_long, int long_time);
 
