@@ -86,7 +86,7 @@ static void  updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick
 
 	if ( (bit == button->pressed) && (button->timepressed == 0) && (level != 2) ){	
 		button->timepressed = now;
-		set_watchdog(pi, button->pin, button->long_press_time),
+		set_watchdog(pi, button->pin, button->long_press_time);
 	} else if (button->timepressed != 0){	
 		if (level == 2) {
 			loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
