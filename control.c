@@ -126,15 +126,10 @@ char * get_lms_command_fragment ( int code ) {
 //  Button press callback
 //  Sets the flag for "button pressed"
 //
-void button_press_cb(const struct button * button, int change, bool presstype) {
-    for (int cnt = 0; cnt < numberofbuttons; cnt++) {
-        if (button == button_ctrls[cnt].gpio_button) {
-            button_ctrls[cnt].presstype = presstype;
-            button_ctrls[cnt].waiting = true;
-            loginfo("Button CB set for button #:%d, gpio pin %d", cnt, button_ctrls[cnt].gpio_button->pin);
-            return;
-        }
-    }
+void button_press_cb(int pressed_idx, bool presstype) {
+	button_ctrls[pressed_idx].presstype = presstype;
+	button_ctrls[pressed_idx].waiting = true;
+	loginfo("Button CB set for button gpio pin %d", button_ctrls[pressed_idx].gpio_button->pin);
 }
 
 //
@@ -236,7 +231,7 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
     if ( (resist != PI_PUD_OFF) && (resist != PI_PUD_DOWN) && (resist == PI_PUD_UP) )
         resist = PI_PUD_UP;
 
-    struct button * gpio_b = setupbutton(pi, pin, button_press_cb, resist, (bool)(pressed == 0) ? 0 : 1, long_time);
+    struct button * gpio_b = setupbutton(pi, pin, button_press_cb, resist, (bool)(pressed == 0) ? 0 : 1, long_time, numberofbuttons);
 
     button_ctrls[numberofbuttons].cmdtype = cmdtype;
     button_ctrls[numberofbuttons].shortfragment = fragment;
@@ -249,7 +244,7 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
     numberofbuttons++;
     loginfo("Button defined: Pin %d, BCM Resistor: %s, Short Type: %s, Short Fragment: %s , Long Type: %s, Long Fragment: %s, Long Press Time: %i",
             pin,
-            (resist == PI_PUD_OFF) ? "both" :
+            (resist == PI_PUD_OFF) ? "none" :
             (resist == PI_PUD_DOWN) ? "down" : "up",
             (cmdtype == LMS) ? "LMS" :
             (cmdtype == SCRIPT) ? "Script" :

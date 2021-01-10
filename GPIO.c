@@ -64,58 +64,42 @@ uint32_t gettime_ms(void) {
 //
 // number of milliseconds to debounce the button
 //
-#define NOPRESSTIME 50
+//#define NOPRESSTIME 50
+//	No additional debouncing is needed. It is done by glitchfilter.
+//
 //
 //
 //  Button handler function
 //  Called by the GPIO interrupt when a button is pressed or released
 //  Depends on edge configuration.
-//  Checks all configred buttons for status changes and
+//  Checks only the buttons pressed for status changes and
 //  calls callback if state change detected.
 //
-//
-//CBFunc_t updateButtons()
-CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick){
+static void  updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick, void *but){
 	uint32_t now;
 //	now = gettime_ms();
-	struct button *button = buttons;
+	struct button *button = but;
 
-	if ( level > 1 )
-		return NULL;
+	bool bit = (level == 0)? 0 : 1;
+	now = tick / 1000;
+	logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
 
-	for (; button < buttons + numberofbuttons; button++) {
-		if (button->pin == pin) {
-			bool bit = (level == 0)? 0 : 1;
-			now = tick / 1000;
-			bool presstype;
-			logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
-
-			int increment = 0;
-			if ( (bit == button->pressed) && (button->timepressed == 0) ){	
-				button->timepressed = now;
-				increment = 0;
-			} else if (button->timepressed != 0){	
-				if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
-					logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
-					increment = 0;
-				} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
-					loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = LONGPRESS;
-					increment = 1;
-				} else {
-					loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = SHORTPRESS;
-					increment = 1;
-				}
-				button->timepressed = 0;
-			}
-			if (button->callback && increment)
-				button->callback(button, increment, presstype);
+	if ( (bit == button->pressed) && (button->timepressed == 0) && (level != 2) ){	
+		button->timepressed = now;
+		set_watchdog(pi, button->pin, button->long_press_time);
+	} else if (button->timepressed != 0){	
+		if (level == 2) {
+			loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
+			button->value = bit;
+			button->callback(button->b_ctrl_idx, LONGPRESS);
+		} else {
+			loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
+			button->value = bit;
+			button->callback(button->b_ctrl_idx, SHORTPRESS);
 		}
+		button->timepressed = 0;
+		set_watchdog(pi, button->pin, 0);
 	}
-	return NULL;
 }
 
 //
@@ -127,21 +111,20 @@ CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick){
 //  Parameters:
 //      pin: GPIO-Pin used in BCM numbering scheme
 //      callback: callback function to be called when button state changed
-//      edge: edge to be used for trigger events,
-//            one of INT_EDGE_RISING, INT_EDGE_FALLING or INT_EDGE_BOTH (the default)
+//      pressed: GPIO pinstate for button to read pressed
+//           0 - state is 0 (default)
+//           1 - state is 1
 //  Returns: pointer to the new button structure
 //           The pointer will be NULL is the function failed for any reason
 //
 //
-struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int resist, bool pressed, int long_press_time)
+struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int resist, bool pressed, int long_press_time, int button_idx)
 {
     if (numberofbuttons > max_buttons)
     {
         logerr("Maximum number of buttons exceded: %i", max_buttons);
         return NULL;
     }
-
-    int edge = EITHER_EDGE;  //Need to see both directions for button depressed time.
 
     struct button *newbutton = buttons + numberofbuttons++;
     newbutton->pi = pi;
@@ -151,10 +134,11 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
     newbutton->timepressed = 0;
     newbutton->pressed = pressed;
     newbutton->long_press_time = long_press_time;
+	newbutton->b_ctrl_idx = button_idx;
     set_mode( pi,  pin, PI_INPUT);
     set_pull_up_down(pi, pin, resist);
     set_glitch_filter(pi, pin, 50000);
-    newbutton->cb_id = callback(pi, (unsigned) pin, (unsigned)edge, (CBFunc_t)updateButtons);
+    newbutton->cb_id = callback_ex(pi, (unsigned) pin, EITHER_EDGE, (CBFuncEx_t)updateButtons, newbutton);
 
     return newbutton;
 }
