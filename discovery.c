@@ -9,7 +9,7 @@
 //  Created by Jörg Schwieder on 02.02.17.
 //
 //
-//  Copyright (c) 2017, Joerg Schwieder, PenguinLovesMusic.com
+//  Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
