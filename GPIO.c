@@ -254,5 +254,27 @@ int init_GPIO() {
 }
 
 void shutdown_GPIO( int pi) {
-	loginfo("Disconnecting from gpio");
+    struct button *button = buttons;
+    struct encoder *encoder = encoders;
+    loginfo("Disconnecting from gpio");
+    for (; button < buttons + numberofbuttons; button++) {
+        if ( wiringPiISRStop(button->pin) == 0 ){
+            loginfo("GPIO %d button callback cancelled.", button->pin);
+        } else {
+            loginfo("Error cancelling callback for GPIO %d.", button->pin);
+        }
+    }
+    for (; encoder < encoders + numberofencoders; encoder++) {
+        if ( wiringPiISRStop(encoder->pin_a) == 0 ) {
+             loginfo("GPIO %d encoder callback cancelled.", encoder->pin_a);
+        } else {
+             loginfo("Error cancelling callback for GPIO %d.", encoder->pin_a);
+        }
+        if ( wiringPiISRStop(encoder->pin_b) == 0 ) {
+             loginfo("GPIO %d encoder callback cancelled.", encoder->pin_b);
+        } else {
+             loginfo("Error cancelling callback for GPIO %d.", encoder->pin_b);
+        }
+    }
 }
+

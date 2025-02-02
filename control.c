@@ -295,17 +295,6 @@ void handle_buttons(struct sbpd_server * server) {
 	}
 }
 
-void disconnect_button_ctrl(){
-    int i;
-    for (int cnt = 0; cnt < numberofbuttons; cnt++) {
-        i = wiringPiISRStop(button_ctrls[cnt].gpio_button->pin);
-        if (i == 0 ) {
-             loginfo("GPIO %d button callback cancelled.", button_ctrls[cnt].gpio_button->pin);
-        } else {
-             loginfo("Error cancelling callback for GPIO %d.", button_ctrls[cnt].gpio_button->pin);
-        }
-    }
-}
 
 //
 //  Encoder interrupt callback
@@ -486,25 +475,3 @@ void handle_encoders(struct sbpd_server * server) {
         }
     }
 }
-
-void disconnect_encoder_ctrl(){
-    int i;
-    for (int cnt = 0; cnt < numberofencoders; cnt++) {
-        i = wiringPiISRStop(encoder_ctrls[cnt].gpio_encoder->pin_a);
-        if (i == 0 ) {
-             loginfo("GPIO %d encoder callback cancelled.", encoder_ctrls[cnt].gpio_encoder->pin_a);
-        } else {
-             loginfo("Error cancelling callback for GPIO %d.", encoder_ctrls[cnt].gpio_encoder->pin_a);
-        }
-        i = wiringPiISRStop(encoder_ctrls[cnt].gpio_encoder->pin_b);
-        if (i == 0 ) {
-             loginfo("GPIO %d encoder callback cancelled.", encoder_ctrls[cnt].gpio_encoder->pin_b);
-        } else {
-             loginfo("Error cancelling callback for GPIO %d.", encoder_ctrls[cnt].gpio_encoder->pin_b);
-        }
-    }
-}
-
-
-
-

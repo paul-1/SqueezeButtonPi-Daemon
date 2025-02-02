@@ -286,8 +286,6 @@ int main(int argc, char * argv[]) {
 		disconnect_uinput();
 	}
 
-	disconnect_button_ctrl();
-	disconnect_encoder_ctrl();
 	shutdown_GPIO( pi_interface );
 
     return 0;

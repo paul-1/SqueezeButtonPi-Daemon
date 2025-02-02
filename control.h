@@ -82,11 +82,6 @@ int setup_button_ctrl( int pi, char * cmd, int pin, int resist, int pressed, cha
 void handle_buttons(struct sbpd_server * server);
 
 //
-//  Remove Button callbacks
-//
-void disconnect_button_ctrl();
-
-//
 //  Store command parameters for each button used
 //
 struct encoder_ctrl
@@ -122,11 +117,6 @@ int setup_encoder_ctrl(int pi, char * cmd, int pin1, int pin2, int mode);
 //      server: the server to send commands to
 //
 void handle_encoders(struct sbpd_server * server);
-
-//
-//  Remove Button callbacks
-//
-void disconnect_encoder_ctrl();
 
 //
 // Set of commands to send to LMS server
