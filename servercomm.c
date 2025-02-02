@@ -143,9 +143,9 @@ bool send_command(struct sbpd_server * server, int command, char * fragment) {
         //commLock = false;
         return true;
     } else if ( command == SCRIPT ) {
-        char * cmdline = (char *) malloc(strlen(fragment));
+        char * cmdline = (char *) malloc(strlen(fragment)*( sizeof(char)) );
         int err;
-        strcpy( cmdline, fragment);
+        strncpy( cmdline, fragment, strlen(fragment));
         loginfo("Sending commandline: %s\n", cmdline);
         if ((err = system(cmdline)) != 0){
             loginfo ("%s exit status = %d\n", cmdline, err);

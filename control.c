@@ -169,7 +169,7 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
     char * separator = ":";
 	char * tmp;
     int cmdtype;
-    int cmd_longtype;
+    int cmd_longtype = NOTUSED;
 
     //
     //  Select fragment for short press parameter
