@@ -126,11 +126,7 @@ struct encoder
     int mode;
     int cba_id;
     int cbb_id;
-    int levA;
-    int levB;
-    int glitch;
 };
-
 
 //
 //

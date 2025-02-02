@@ -82,7 +82,7 @@ int setup_button_ctrl( int pi, char * cmd, int pin, int resist, int pressed, cha
 void handle_buttons(struct sbpd_server * server);
 
 //
-//  Remove Button callbacks from pigpiod
+//  Remove Button callbacks
 //
 void disconnect_button_ctrl();
 
@@ -124,7 +124,7 @@ int setup_encoder_ctrl(int pi, char * cmd, int pin1, int pin2, int mode);
 void handle_encoders(struct sbpd_server * server);
 
 //
-//  Remove Button callbacks from pigpiod
+//  Remove Button callbacks
 //
 void disconnect_encoder_ctrl();
 

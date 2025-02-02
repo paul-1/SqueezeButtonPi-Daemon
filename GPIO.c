@@ -38,7 +38,7 @@
 #include "GPIO.h"
 #include "sbpd.h"
 
-#include <pigpiod_if2.h>
+#include <wiringPi.h>
 
 //
 //  Configured buttons
@@ -74,48 +74,40 @@ uint32_t gettime_ms(void) {
 //  calls callback if state change detected.
 //
 //
-//CBFunc_t updateButtons()
-CBFunc_t updateButtons( int pi, unsigned pin, unsigned  level, uint32_t tick){
+void updateButtons() {
 	uint32_t now;
-//	now = gettime_ms();
+	now = gettime_ms();
 	struct button *button = buttons;
 
-	if ( level > 1 )
-		return NULL;
-
 	for (; button < buttons + numberofbuttons; button++) {
-		if (button->pin == pin) {
-			bool bit = (level == 0)? 0 : 1;
-			now = tick / 1000;
-			bool presstype;
-			logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
+		bool bit = digitalRead(button->pin);
+		bool presstype;
+		logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
 
-			int increment = 0;
-			if ( (bit == button->pressed) && (button->timepressed == 0) ){	
-				button->timepressed = now;
+		int increment = 0;
+		if ( (bit == button->pressed) && (button->timepressed == 0) ){	
+			button->timepressed = now;
+			increment = 0;
+		} else if (button->timepressed != 0){	
+			if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
+				logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
 				increment = 0;
-			} else if (button->timepressed != 0){	
-				if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
-					logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
-					increment = 0;
-				} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
-					loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = LONGPRESS;
-					increment = 1;
-				} else {
-					loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
-					button->value = bit;
-					presstype = SHORTPRESS;
-					increment = 1;
-				}
-				button->timepressed = 0;
+			} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
+				loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
+				button->value = bit;
+				presstype = LONGPRESS;
+				increment = 1;
+			} else {
+				loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
+				button->value = bit;
+				presstype = SHORTPRESS;
+				increment = 1;
 			}
-			if (button->callback && increment)
-				button->callback(button, increment, presstype);
+			button->timepressed = 0;
 		}
+		if (button->callback && increment)
+			button->callback(button, increment, presstype);
 	}
-	return NULL;
 }
 
 //
@@ -141,7 +133,7 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
         return NULL;
     }
 
-    int edge = EITHER_EDGE;  //Need to see both directions for button depressed time.
+    int edge = INT_EDGE_BOTH;  //Need to see both directions for button depressed time.
 
     struct button *newbutton = buttons + numberofbuttons++;
     newbutton->pi = pi;
@@ -151,10 +143,9 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
     newbutton->timepressed = 0;
     newbutton->pressed = pressed;
     newbutton->long_press_time = long_press_time;
-    set_mode( pi,  pin, PI_INPUT);
-    set_pull_up_down(pi, pin, resist);
-    set_glitch_filter(pi, pin, 50000);
-    newbutton->cb_id = callback(pi, (unsigned) pin, (unsigned)edge, (CBFunc_t)updateButtons);
+    pinMode( pin, INPUT);
+    pullUpDnControl(pin, resist);
+    newbutton->cb_id = wiringPiISR((unsigned) pin, (unsigned)edge, &updateButtons);
 
     return newbutton;
 }
@@ -165,10 +156,6 @@ struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int re
 // Rotary Encoder taken from https://github.com/astine/rotaryencoder
 // http://theatticlight.net/posts/Reading-a-Rotary-Encoder-from-a-Raspberry-Pi/
 //
-// Updated to encoder control based on 
-// http://abyz.me.uk/rpi/pigpio/code/rotary_encoder_py.zip
-//
-//
 //  Configured encoders
 //
 static int numberofencoders = 0;
@@ -178,72 +165,29 @@ static int numberofencoders = 0;
 //
 static struct encoder encoders[max_encoders];
 
-
-/*
-
-             +---------+         +---------+      0
-             |         |         |         |
-   A         |         |         |         |
-             |         |         |         |
-   +---------+         +---------+         +----- 1
-
-       +---------+         +---------+            0
-       |         |         |         |
-   B   |         |         |         |
-       |         |         |         |
-   ----+         +---------+         +---------+  1
-
-*/
-static int transits[16]=
+void updateEncoders()
 {
-/* 0000 0001 0010 0011 0100 0101 0110 0111 */
-      0,  -1,   1,   0,   1,   0,   0,  -1,
-/* 1000 1001 1010 1011 1100 1101 1110 1111 */
-     -1,   0,   0,   1,   0,   1,  -1,   0
-};
+    struct encoder *encoder = encoders;
+    for (; encoder < encoders + numberofencoders; encoder++)
+    {
+        int MSB = digitalRead(encoder->pin_a);
+        int LSB = digitalRead(encoder->pin_b);
+        
+        int encoded = (MSB << 1) | LSB;
+        int sum = (encoder->lastEncoded << 2) | encoded;
+        
+        int increment = 0;
+        
+        if(sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) increment = 1;
+        if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) increment = -1;
+        
+        encoder->value += increment;
+        encoder->lastEncoded = encoded;
+        encoder->detents = encoder->value / 4;
 
-static void updateEncoders(
-   int pi, unsigned gpio, unsigned level, uint32_t tick, void *enc)
-{
-	struct encoder *encoder = enc;
-	long newState, inc;
-
-	if (level != PI_TIMEOUT)
-	{
-		if (gpio == encoder->pin_a)
-			encoder->levA = level;
-		else
-			encoder->levB = level;
-
-		newState = encoder->levA << 1 | encoder->levB;
-
-		inc = transits[encoder->lastEncoded << 2 | newState];
-
-/*	Since we are running in a polling mode, just update the encoder value and quit.
-	no need to call the encoders callback.
-		if (inc)
-		{
-			encoder->lastEncoded = newState;
-
-			detent = encoder->value / 4;
-
-			encoder->value += inc;
-
-			if (encoder->callback)
-			{
-				if (encoder->mode == ENCODER_MODE_DETENT)
-				{
-					if (detent != (encoder->value / 4)) (encoder->callback)(encoder, encoder->value / 4);
-				}
-				else (encoder->callback)(encoder, encoder->value);
-			}
-		}*/
-		if (inc){
-			encoder->lastEncoded = newState;
-			encoder->value += inc;
-			encoder->detents = encoder->value / encoder->mode;
-		}
-	}
+        if (encoder->callback)
+            encoder->callback(encoder, increment);
+    }
 }
 
 //
@@ -282,21 +226,16 @@ struct encoder *setupencoder(int pi,
     newencoder->lastEncoded = 0;
     newencoder->callback = e_callback;
     newencoder->mode = mode;
-    newencoder->glitch = 1000;
-    newencoder->levA = 0;
-    newencoder->levB = 0;
 
-    set_mode(pi, pin_a, PI_INPUT);
-    set_mode(pi, pin_b, PI_INPUT);
-    set_pull_up_down(pi, pin_a, PI_PUD_UP);
-    set_pull_up_down(pi, pin_b, PI_PUD_UP);
-    set_glitch_filter(pi, pin_a, newencoder->glitch);
-    set_glitch_filter(pi, pin_b, newencoder->glitch);
+    pinMode(pin_a, INPUT);
+    pinMode(pin_b, INPUT);
+    pullUpDnControl(pin_a, PUD_UP);
+    pullUpDnControl(pin_b, PUD_UP);
 
-    newencoder->lastEncoded = (gpio_read(pi, pin_a) << 1) | gpio_read(pi, pin_b);
+    newencoder->lastEncoded = (digitalRead(pin_a) << 1) | digitalRead(pin_b);
 
-    newencoder->cba_id = callback_ex(pi, (unsigned) pin_a, EITHER_EDGE, (CBFuncEx_t)updateEncoders, newencoder);
-    newencoder->cbb_id = callback_ex(pi, (unsigned) pin_b, EITHER_EDGE, (CBFuncEx_t)updateEncoders, newencoder);
+    newencoder->cba_id = wiringPiISR((unsigned) pin_a, INT_EDGE_BOTH, &updateEncoders);
+    newencoder->cbb_id = wiringPiISR((unsigned) pin_b, INT_EDGE_BOTH, &updateEncoders);
 
     return newencoder;
 }
@@ -310,11 +249,10 @@ struct encoder *setupencoder(int pi,
 
 int init_GPIO() {
 	loginfo("Initializing GPIO");
-	int pi = pigpio_start( NULL, NULL); /* Connect to Pi. NULL means the local pigpiod*/
+	int pi = wiringPiSetupGpio(); /* Connect to Pi. NULL means the local pigpiod*/
 	return pi;
 }
 
 void shutdown_GPIO( int pi) {
-	loginfo("Disconnecting from pigpiod");
-	pigpio_stop(pi);
+	loginfo("Disconnecting from gpio");
 }

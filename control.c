@@ -39,7 +39,7 @@
 #include "sbpd.h"
 #include "control.h"
 #include "servercomm.h"
-#include <pigpiod_if2.h>
+#include <wiringPi.h>
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
@@ -233,8 +233,8 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
     }
    
     // Make sure resistor setting makes sense, or reset to default
-    if ( (resist != PI_PUD_OFF) && (resist != PI_PUD_DOWN) && (resist == PI_PUD_UP) )
-        resist = PI_PUD_UP;
+    if ( (resist != PUD_OFF) && (resist != PUD_DOWN) && (resist == PUD_UP) )
+        resist = PUD_UP;
 
     struct button * gpio_b = setupbutton(pi, pin, button_press_cb, resist, (bool)(pressed == 0) ? 0 : 1, long_time);
 
@@ -249,8 +249,8 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
     numberofbuttons++;
     loginfo("Button defined: Pin %d, BCM Resistor: %s, Short Type: %s, Short Fragment: %s , Long Type: %s, Long Fragment: %s, Long Press Time: %i",
             pin,
-            (resist == PI_PUD_OFF) ? "both" :
-            (resist == PI_PUD_DOWN) ? "down" : "up",
+            (resist == PUD_OFF) ? "both" :
+            (resist == PUD_DOWN) ? "down" : "up",
             (cmdtype == LMS) ? "LMS" :
             (cmdtype == SCRIPT) ? "Script" :
             (cmdtype == KEYBOARD) ? "Keyboard" : "unused",
@@ -298,7 +298,7 @@ void handle_buttons(struct sbpd_server * server) {
 void disconnect_button_ctrl(){
     int i;
     for (int cnt = 0; cnt < numberofbuttons; cnt++) {
-        i = callback_cancel(button_ctrls[cnt].gpio_button->cb_id);
+        i = wiringPiISRStop(button_ctrls[cnt].gpio_button->pin);
         if (i == 0 ) {
              loginfo("GPIO %d button callback cancelled.", button_ctrls[cnt].gpio_button->pin);
         } else {
@@ -427,9 +427,6 @@ void handle_encoders(struct sbpd_server * server) {
     //
     long long time = ms_timer();
 
-    //logdebug("Polling encoders");
-
-//    int command = LMS;
     long current_value;
 
     for (int cnt = 0; cnt < numberofencoders; cnt++) {
@@ -493,13 +490,13 @@ void handle_encoders(struct sbpd_server * server) {
 void disconnect_encoder_ctrl(){
     int i;
     for (int cnt = 0; cnt < numberofencoders; cnt++) {
-        i = callback_cancel(encoder_ctrls[cnt].gpio_encoder->cba_id);
+        i = wiringPiISRStop(encoder_ctrls[cnt].gpio_encoder->pin_a);
         if (i == 0 ) {
              loginfo("GPIO %d encoder callback cancelled.", encoder_ctrls[cnt].gpio_encoder->pin_a);
         } else {
              loginfo("Error cancelling callback for GPIO %d.", encoder_ctrls[cnt].gpio_encoder->pin_a);
         }
-        i = callback_cancel(encoder_ctrls[cnt].gpio_encoder->cbb_id);
+        i = wiringPiISRStop(encoder_ctrls[cnt].gpio_encoder->pin_b);
         if (i == 0 ) {
              loginfo("GPIO %d encoder callback cancelled.", encoder_ctrls[cnt].gpio_encoder->pin_b);
         } else {
