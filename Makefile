@@ -32,8 +32,11 @@ $(EXECUTABLE-STATIC_CURL): $(OBJECTS)
 
 $(OBJECTS): $(DEPS)
 
+key_event_codes.c: gen_key_event_codes.sh
+	CC="$(CC)" ./gen_key_event_codes.sh > $@.tmp && mv $@.tmp $@
+
 .c.o:
 	$(CC) $(CFLAGS) $< -c -o $@
 
 clean:
-	rm -f $(OBJECTS) $(EXECUTABLE) $(EXECUTABLE-STATIC_CURL)
+	rm -f $(OBJECTS) $(EXECUTABLE) $(EXECUTABLE-STATIC_CURL) key_event_codes.c key_event_codes.c.tmp

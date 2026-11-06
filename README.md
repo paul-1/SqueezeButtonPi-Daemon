@@ -140,6 +140,7 @@ Arguments are a comma-separated list of configuration parameters:
 
     Uses the linux uinput kernel module.  Make sure to load it with sudo modprobe uinput.
     Keycode definitions can be found: https://github.com/raspberrypi/linux/blob/rpi-4.19.y/include/uapi/linux/input-event-codes.h
+    Key names (codes 0-254) are taken from the build system's linux/input-event-codes.h.
 
 ## Security
 

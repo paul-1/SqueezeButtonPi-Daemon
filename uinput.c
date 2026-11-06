@@ -28,89 +28,99 @@
 //  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 //  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
-//  Attribution: the uinput device setup and event emission code is derived
-//  from the example in the Linux kernel documentation "uinput module"
-//  (Documentation/input/uinput.rst),
-//  https://www.kernel.org/doc/html/v4.19/input/uinput.html
-//  The Linux kernel documentation is distributed under GPL-2.0.
-//
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/ioctl.h>
 #include <linux/uinput.h>
 #include "uinput.h"
 #include "sbpd.h"
 
-static int usetup_fd;
+#define KEYBOARD_NAME "jivelite-uinput"
+#define KEYBOARD_KEY_COUNT 255
+
+static int keyboard_fd = -1;
 static pthread_mutex_t send_lock = PTHREAD_MUTEX_INITIALIZER;
 
-int init_uinput(void){
-	int fd;
-	struct uinput_setup usetup;
-	int i;
+static int create_keyboard(int fd)
+{
+	struct uinput_setup setup = {
+		.id = { .bustype = BUS_VIRTUAL, .version = 1 },
+	};
 
-	fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-	if(fd < 0)
-		return 1;
+	if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0)
+		return -1;
+	for (int key = 0; key < KEYBOARD_KEY_COUNT; key++)
+		if (ioctl(fd, UI_SET_KEYBIT, key) < 0)
+			return -1;
+	snprintf(setup.name, sizeof(setup.name), "%s", KEYBOARD_NAME);
+	if (ioctl(fd, UI_DEV_SETUP, &setup) < 0)
+		return -1;
+	return ioctl(fd, UI_DEV_CREATE);
+}
 
-	//setup keyboard
-	if(ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0)
+int init_uinput(void)
+{
+	int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+
+	if (fd < 0)
 		return 1;
-	//Add keys to device.
-	for(i=0; i<255; i++){
-		if(ioctl(fd, UI_SET_KEYBIT, i) < 0)
-			return 1;
+	if (create_keyboard(fd) < 0) {
+		close(fd);
+		return 1;
 	}
-
-	memset(&usetup, 0, sizeof(usetup));
-	snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "jivelite-uinput");
-	usetup.id.bustype = BUS_USB;
-	usetup.id.vendor  = 0x1234;
-	usetup.id.product = 0x5678;
-
-	if(ioctl(fd, UI_DEV_SETUP, &usetup) < 0)
-		return 1;
-	if(ioctl(fd, UI_DEV_CREATE) < 0)
-		return 1;
-
-	usetup_fd = fd;
-
+	keyboard_fd = fd;
 	return 0;
 }
 
-int disconnect_uinput(void){
-	if(ioctl(usetup_fd, UI_DEV_DESTROY) < 0)
-		return 1;
-	close(usetup_fd);
-	return 0;
+int disconnect_uinput(void)
+{
+	int result = ioctl(keyboard_fd, UI_DEV_DESTROY) < 0;
+
+	close(keyboard_fd);
+	keyboard_fd = -1;
+	return result;
 }
 
-int emitKey(int key, int value){
-	struct input_event ie;
+/* The kernel stamps uinput events itself, so the time field stays zero. */
+static int send_event(unsigned short type, unsigned short code, int value,
+		      const char *what)
+{
+	const struct input_event event = { .type = type, .code = code, .value = value };
+	ssize_t written;
 
-	//not really needed right now, as we are polling inside the server rather than pure irq driven
-	pthread_mutex_lock(&send_lock);
+	do {
+		written = write(keyboard_fd, &event, sizeof(event));
+	} while (written < 0 && errno == EINTR);
+	if (written == sizeof(event))
+		return 0;
+	if (written < 0)
+		logerr("Could not write keyboard %s event: %s", what, strerror(errno));
+	else
+		logerr("Incomplete keyboard %s write: %zd of %zu bytes",
+		       what, written, sizeof(event));
+	return 1;
+}
 
-	ie.type = EV_KEY;
-	ie.code = key;
-	ie.value = value;
-	/* timestamp values below are ignored */
-	ie.time.tv_sec = 0;
-	ie.time.tv_usec = 0;
-	if(write(usetup_fd, &ie, sizeof(ie)) < 0)
+int emitKey(int key, int value)
+{
+	int err = pthread_mutex_lock(&send_lock);
+	int result;
+
+	if (err != 0) {
+		logerr("Could not lock keyboard output: %s", strerror(err));
 		return 1;
-	// Send sync event
-	ie.type = EV_SYN;
-	ie.code = SYN_REPORT;
-	ie.value = 0;
-	if(write(usetup_fd, &ie, sizeof(ie)) < 0)
-		return 1;
-
-	pthread_mutex_unlock(&send_lock);
-	return 0;
+	}
+	result = send_event(EV_KEY, key, value, "key") ||
+		 send_event(EV_SYN, SYN_REPORT, 0, "sync");
+	err = pthread_mutex_unlock(&send_lock);
+	if (err != 0) {
+		logerr("Could not unlock keyboard output: %s", strerror(err));
+		result = 1;
+	}
+	return result;
 }
