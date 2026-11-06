@@ -35,60 +35,19 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Dependencies
 
-SqueezeButtonPi uses libCurl, POSIX threads and **libgpiod 2.0.2 or newer**
-(including 2.3.2). The Linux GPIO character-device v2 API requires kernel
-**5.10 or newer**, with GPIO input edge and bias support enabled. Build with
-`make`; a C compiler, make, pkg-config and development files for libCurl and
-libgpiod are required. libgpiod must also be installed on the target system.
-No WiringPi, pigpio or pigpiod is required.
+SqueezeButtonPi uses libCurl and **libgpiod 2.0.2 or newer**. It requires Linux
+kernel 5.10 or newer. Building requires a C compiler, make, pkg-config, and the
+libCurl and libgpiod development files.
 
-### Event-driven GPIO
+### Supported boards
 
-BCM pin numbers and command-line resistor values remain unchanged. At startup,
-sbpd discovers `/dev/gpiochip*` by controller identity, not a fixed chip number
-or line names (which may be changed by device-tree overlays). Supported labels
-are `pinctrl-bcm2835` (Pi 1/2/3, Zero/Zero W/Zero 2 W and CM1/CM3),
-`pinctrl-bcm2711` (Pi 4/400 and CM4), and `pinctrl-rp1` (Pi 5/500 and CM5).
-For these controllers, the line offset is the BCM GPIO number. RP1 is preferred
-when present; BCM2712's internal/AON controllers are deliberately not selected
-for Pi 5 header GPIOs. This follows the controller distinction used by
-[Raspberry Pi pinctrl](https://github.com/raspberrypi/utils/tree/master/pinctrl),
-without importing its MMIO implementation.
+All Raspberry Pi models are supported, including Pi 1/2/3/4/5, Pi 400/500,
+Zero, Zero W, Zero 2 W and Compute Modules. Pins use BCM GPIO numbering.
 
-Set `SBPD_GPIO_CHIP=/dev/gpiochipN` to restrict discovery to a supported chip.
-Ambiguous chips require this explicit selection. All configured lines must fit
-the selected controller. On Compute Modules the carrier determines which lines
-are exposed; GPIO numbers are controller-local, not physical connector numbers.
-Older 26-pin Pi headers also retain BCM numbering (including GPIO21 rather than
-GPIO27 on revision 1 boards). The process needs read access to the discovered
-chips and exclusive ownership of the configured lines. Unsupported controllers
-are rejected rather than assuming that chip zero is the header controller.
-Invalid/duplicate pins, unsupported bias, busy lines, unavailable chips and
-worker startup failures are explicit errors; there is no polling fallback.
+sbpd finds the Raspberry Pi GPIO chip automatically. To select a chip manually,
+set `SBPD_GPIO_CHIP`, for example:
 
-All lines are requested together with both edges and their configured bias.
-Initial levels establish the startup baseline; activity during initialization
-is not guaranteed to count. One explicitly normal-priority (`SCHED_OTHER`, 0)
-thread blocks indefinitely in `poll()` on the ordered GPIO event fd and a
-shutdown pipe. It processes only the affected button/encoder using event levels
-and monotonic timestamps, not scans of MMIO pins. Unrelated edges cannot finish
-a held button press. Button release classifies short/long presses after the
-existing 50 ms chatter filter; encoder quadrature and four-step detents remain.
-State is synchronized; no lock is held across main-thread command I/O.
-
-There are no WiringPi ISR threads, real-time priority requests, or periodic
-0.5 ms GPIO waits. The main loop retains its 100 ms command aggregation and
-synchronous server requests. Pending button actions still coalesce between
-main-loop passes. Per-line event sequence gaps indicate dropped kernel events;
-sbpd logs a warning, re-reads current levels and discards older queued events
-instead of stopping. GPIO read failures stop the daemon explicitly. Shutdown wakes and joins the GPIO worker
-before curl/uinput cleanup.
-
-This is an application-side replacement for WiringPi's timed ISR waits, **not
-a kernel fix**: it removes their idle wakeups (about 8,000/s for four ISR lines)
-without changing kernel scheduling or masking kernel warnings. Real Raspberry
-Pi testing is still needed for controller discovery, bias support and rapid encoder
-bursts; the requested kernel event queue is 1,024 events.
+`SBPD_GPIO_CHIP=/dev/gpiochip0 sbpd ...`
 
 ## Configuration
 
