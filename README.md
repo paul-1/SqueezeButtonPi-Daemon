@@ -8,6 +8,7 @@ Rotary encoders or rotary-push-encoders can be used for volume, buttons (and the
 ## COPYRIGHT / LICENSE
 
 Copyright (c) 2017, Joerg Schwieder, PenguinLovesMusic.com
+Copyright (c) 2026, paul-1
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
