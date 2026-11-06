@@ -44,7 +44,7 @@ mksquashfs $EXTNAM $EXTNAM.tcz -b 16384
 md5sum $EXTNAM.tcz > $EXTNAM.tcz.md5.txt
 
 cd $EXTNAM
-mv ../$EXTNAM.tcz*
+mv ../$EXTNAM.tcz* .
 
 echo -e "curl.tcz" > $TCZDEP
 echo -e "libgpiod.tcz" > $TCZDEP
