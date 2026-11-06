@@ -30,7 +30,7 @@ make
 SRCDIR=$(pwd)
 
 mkdir -p $TMPDIR/usr/local/bin
-mkdir -p $TMPDIR/usr/local/share/$TMPDIR
+mkdir -p $TMPDIR/usr/local/share/$EXTNAM
 cp sbpd $TMPDIR/usr/local/bin/
 cp sbpd_commands.cfg $TMPDIR/usr/local/share/$EXTNAM/
 cp LICENSE $TMPDIR/usr/local/share/$EXTNAM/
