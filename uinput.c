@@ -61,9 +61,13 @@ int disconnect_uinput(void){
 
 int emitKey(int key, int value){
 	struct input_event ie;
+	int result = 0;
+	int err = pthread_mutex_lock(&send_lock);
 
-	//not really needed right now, as we are polling inside the server rather than pure irq driven
-	pthread_mutex_lock(&send_lock);
+	if (err != 0) {
+		logerr("Could not lock keyboard output: %s", strerror(err));
+		return 1;
+	}
 
 	ie.type = EV_KEY;
 	ie.code = key;
@@ -71,15 +75,38 @@ int emitKey(int key, int value){
 	/* timestamp values below are ignored */
 	ie.time.tv_sec = 0;
 	ie.time.tv_usec = 0;
-	if(write(usetup_fd, &ie, sizeof(ie)) < 0)
-		return 1;
+	ssize_t written;
+	do {
+		written = write(usetup_fd, &ie, sizeof(ie));
+	} while (written < 0 && errno == EINTR);
+	if (written != sizeof(ie)) {
+		if (written < 0)
+			logerr("Could not write keyboard event: %s", strerror(errno));
+		else
+			logerr("Incomplete keyboard event write: %zd of %zu bytes", written, sizeof(ie));
+		result = 1;
+		goto unlock;
+	}
 	// Send sync event
 	ie.type = EV_SYN;
 	ie.code = SYN_REPORT;
 	ie.value = 0;
-	if(write(usetup_fd, &ie, sizeof(ie)) < 0)
-		return 1;
+	do {
+		written = write(usetup_fd, &ie, sizeof(ie));
+	} while (written < 0 && errno == EINTR);
+	if (written != sizeof(ie)) {
+		if (written < 0)
+			logerr("Could not write keyboard sync event: %s", strerror(errno));
+		else
+			logerr("Incomplete keyboard sync write: %zd of %zu bytes", written, sizeof(ie));
+		result = 1;
+	}
 
-	pthread_mutex_unlock(&send_lock);
-	return 0;
+unlock:
+	err = pthread_mutex_unlock(&send_lock);
+	if (err != 0) {
+		logerr("Could not unlock keyboard output: %s", strerror(err));
+		result = 1;
+	}
+	return result;
 }

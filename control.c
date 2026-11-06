@@ -75,8 +75,13 @@ static int find_key(const char *name)
 static void send_key_seq( int key, int repeat){
 	loginfo("Sending key: %d, %d times", key, repeat);
 	for ( int i=0; i < repeat; i++){
-		emitKey( key, 1);
-		emitKey( key, 0);
+		int press_error = emitKey( key, 1);
+		/* A failed sync write may still have delivered the key press. */
+		int release_error = emitKey( key, 0);
+		if (press_error || release_error) {
+			logerr("Keyboard sequence for key %d failed; stopping repeats", key);
+			return;
+		}
 	}
 }
 

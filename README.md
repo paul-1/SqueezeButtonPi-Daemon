@@ -128,6 +128,12 @@ Arguments are a comma-separated list of configuration parameters:
     Uses the linux uinput kernel module.  Make sure to load it with sudo modprobe uinput.
     Keycode definitions can be found: https://github.com/raspberrypi/linux/blob/rpi-4.19.y/include/uapi/linux/input-event-codes.h
 
+Keyboard writes are nonblocking. Failed or incomplete writes are logged and stop
+the current repeat sequence without retaining the output mutex. A release is
+attempted even when the press fails, since a failed sync can follow a delivered
+press. A release failure is reported; delivery cannot be guaranteed when the
+uinput device is unavailable.
+
 ## Security
 
 As long as /dev/uinput permissions are set user writable, sbpd does not need to run with root permissions.
