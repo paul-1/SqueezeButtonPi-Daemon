@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-3-Clause
 
+tce-load -wil compiletc curl-dev libgpiod-dev squashfs-tools
+
 EXTNAM=pcp-sbpd
 TMPDIR=/tmp/$EXTNAM
 TCZINFO=$EXTNAM.tcz.info
