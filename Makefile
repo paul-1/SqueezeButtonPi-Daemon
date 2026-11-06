@@ -1,7 +1,7 @@
 CC = gcc
-CFLAGS += -Wall -fPIC -std=gnu99 -s -I/usr/local/include -Wl,-rpath,/usr/local/lib
-LDFLAGS = -L./lib -Wl,-rpath,/usr/local/lib -lcurl -lwiringPi
-STATIC_LDFLAGS = -lpthread -ldl -lrt -lssl -lcrypto -lz -lm -lidn2 -lto -lwiringPi /usr/local/lib/libcurl.a
+CFLAGS += -Wall -fPIC -std=gnu99 -s -pthread -I/usr/local/include -Wl,-rpath,/usr/local/lib
+LDFLAGS = -L./lib -Wl,-rpath,/usr/local/lib -lcurl -pthread
+STATIC_LDFLAGS = -lpthread -ldl -lrt -lssl -lcrypto -lz -lm -lidn2 -lto /usr/local/lib/libcurl.a
 
 EXECUTABLE = sbpd
 EXECUTABLE-STATIC_CURL = sbpd-static

@@ -35,7 +35,50 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Dependencies
 
-SqueezeButtonPi uses [pigpio](https://github.com/joan2937/pigpio "PiGpio") and libCurl
+SqueezeButtonPi uses libCurl, POSIX threads and the Linux GPIO character-device
+v2 API (kernel **5.10 or newer**, with matching `linux/gpio.h` development
+headers). The GPIO driver must support input edge events and the configured
+pull-up/pull-down/disabled bias. Raspberry Pi kernel 6.18 provides this API;
+no WiringPi, pigpio, pigpiod or libgpiod library is required.
+
+Build with `make`; run the hardware-independent GPIO and control mock tests with
+`make test-gpio`. A C compiler, make and libCurl development files are required
+for the daemon; the tests need only the compiler, Linux GPIO headers and pthreads.
+
+### Event-driven GPIO
+
+BCM pin numbers and command-line resistor values remain unchanged. At startup,
+sbpd searches `/dev/gpiochip0` through `/dev/gpiochip63` for the
+`pinctrl-bcm2835` chip and maps BCM numbers to its matching line offsets. Set
+`SBPD_GPIO_CHIP=/dev/gpiochipN` to restrict the search. The process needs read
+access to the chip and exclusive ownership of the configured lines. This mapping
+is for the BCM2835 GPIO controller used by Raspberry Pi Zero/Zero W; other GPIO
+controllers are not currently supported.
+Invalid/duplicate pins, unsupported bias, busy lines, unavailable chips and
+worker startup failures are explicit errors; there is no polling fallback.
+
+All lines are requested together with both edges and their configured bias.
+Initial levels establish the startup baseline; activity during initialization
+is not guaranteed to count. One explicitly normal-priority (`SCHED_OTHER`, 0)
+thread blocks indefinitely in `poll()` on the ordered GPIO event fd and a
+shutdown pipe. It processes only the affected button/encoder using event levels
+and monotonic timestamps, not scans of MMIO pins. Unrelated edges cannot finish
+a held button press. Button release classifies short/long presses after the
+existing 50 ms chatter filter; encoder quadrature and four-step detents remain.
+State is synchronized; no lock is held across main-thread command I/O.
+
+There are no WiringPi ISR threads, real-time priority requests, or periodic
+0.5 ms GPIO waits. The main loop retains its 100 ms command aggregation and
+synchronous server requests. Pending button actions still coalesce between
+main-loop passes. GPIO queue overflow/read failures stop the daemon explicitly
+instead of silently miscounting. Shutdown wakes and joins the GPIO worker
+before curl/uinput cleanup.
+
+This is an application-side replacement for WiringPi's timed ISR waits, **not
+a kernel fix**: it removes their idle wakeups (about 8,000/s for four ISR lines)
+without changing kernel scheduling or masking kernel warnings. Real Raspberry
+Pi testing is still needed for board line names, bias support and rapid encoder
+bursts; the requested kernel event queue is 1,024 events.
 
 ## Configuration
 
@@ -130,7 +173,8 @@ Arguments are a comma-separated list of configuration parameters:
 
 ## Security
 
-As long as /dev/uinput permissions are set user writable, sbpd does not need to run with root permissions.
+With appropriate `/dev/gpiochipN` permissions (and `/dev/uinput` permissions when
+keyboard commands are used), sbpd does not need root permissions.
 
 ## Limitations
 

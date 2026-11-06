@@ -39,7 +39,7 @@
 #include "sbpd.h"
 #include "control.h"
 #include "servercomm.h"
-#include <wiringPi.h>
+#include <pthread.h>
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
@@ -52,6 +52,7 @@ static struct button_ctrl button_ctrls[max_buttons];
 static struct encoder_ctrl encoder_ctrls[max_encoders];
 static int numberofbuttons = 0;
 static int numberofencoders = 0;
+static pthread_mutex_t button_lock = PTHREAD_MUTEX_INITIALIZER;
 
 //
 // Keyboard command controls
@@ -127,14 +128,17 @@ char * get_lms_command_fragment ( int code ) {
 //  Sets the flag for "button pressed"
 //
 void button_press_cb(const struct button * button, int change, bool presstype) {
+    (void)change;
+    pthread_mutex_lock(&button_lock);
     for (int cnt = 0; cnt < numberofbuttons; cnt++) {
         if (button == button_ctrls[cnt].gpio_button) {
             button_ctrls[cnt].presstype = presstype;
             button_ctrls[cnt].waiting = true;
             loginfo("Button CB set for button #:%d, gpio pin %d", cnt, button_ctrls[cnt].gpio_button->pin);
-            return;
+            break;
         }
     }
+    pthread_mutex_unlock(&button_lock);
 }
 
 //
@@ -160,6 +164,10 @@ void button_press_cb(const struct button * button, int change, bool presstype) {
 //      long_time: Number of milliseconds to define a long press
 
 int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char * cmd_long, int long_time) {
+    if (numberofbuttons >= max_buttons) {
+        logerr("Maximum number of button controls exceeded");
+        return -1;
+    }
     char * fragment = NULL;
     char * fragment_long = NULL;
     char * script;
@@ -237,6 +245,8 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
         resist = PUD_UP;
 
     struct button * gpio_b = setupbutton(pi, pin, button_press_cb, resist, (bool)(pressed == 0) ? 0 : 1, long_time);
+    if (!gpio_b)
+        return -1;
 
     button_ctrls[numberofbuttons].cmdtype = cmdtype;
     button_ctrls[numberofbuttons].shortfragment = fragment;
@@ -271,17 +281,23 @@ int setup_button_ctrl(int pi, char * cmd, int pin, int resist, int pressed, char
 void handle_buttons(struct sbpd_server * server) {
 	//logdebug("Polling buttons");
 	for (int cnt = 0; cnt < numberofbuttons; cnt++) {
-		if (button_ctrls[cnt].waiting) {
+        /* Take pending state before slow network/script/key I/O. */
+        pthread_mutex_lock(&button_lock);
+        bool waiting = button_ctrls[cnt].waiting;
+        bool presstype = button_ctrls[cnt].presstype;
+        button_ctrls[cnt].waiting = false;
+        pthread_mutex_unlock(&button_lock);
+		if (waiting) {
 			loginfo("Button pressed: Pin: %d, Press Type:%s", button_ctrls[cnt].gpio_button->pin,
-					(button_ctrls[cnt].presstype == LONGPRESS) ? "Long" : "Short" );
-			if ( button_ctrls[cnt].presstype == SHORTPRESS ) {
+					(presstype == LONGPRESS) ? "Long" : "Short" );
+			if ( presstype == SHORTPRESS ) {
 				if (button_ctrls[cnt].cmdtype == KEYBOARD){
 					send_key_seq( button_ctrls[cnt].key_code, 1 );
 				} else if ( button_ctrls[cnt].shortfragment != NULL ) {
 					send_command(server, button_ctrls[cnt].cmdtype, button_ctrls[cnt].shortfragment);
 				}
 			}
-			if ( button_ctrls[cnt].presstype == LONGPRESS ) {
+			if ( presstype == LONGPRESS ) {
 				if (button_ctrls[cnt].cmd_longtype == KEYBOARD){
 					send_key_seq( button_ctrls[cnt].key_code_long, 1 );
 				} else if ( button_ctrls[cnt].longfragment != NULL ) {
@@ -290,7 +306,6 @@ void handle_buttons(struct sbpd_server * server) {
 					logdebug("No Long Press command configured");
 				}
 			}
-			button_ctrls[cnt].waiting = false;  // clear waiting
 		}
 	}
 }
@@ -301,7 +316,7 @@ void handle_buttons(struct sbpd_server * server) {
 //  Currently does nothing since we poll for volume changes
 //
 void encoder_rotate_cb(const struct encoder * encoder, long change) {
-    logdebug("Interrupt: encoder value: %d change: %d", encoder->value, change);
+    logdebug("GPIO edge: encoder value: %ld change: %ld", encoder->value, change);
 }
 
 //
@@ -320,6 +335,10 @@ void encoder_rotate_cb(const struct encoder * encoder, long change) {
 //
 //
 int setup_encoder_ctrl(int pi, char * cmd, int pin1, int pin2, int mode) {
+    if (numberofencoders >= max_encoders) {
+        logerr("Maximum number of encoder controls exceeded");
+        return -1;
+    }
     int cmd_type = NOTUSED;
 	char * fragment = NULL;
     char * fragment_neg = NULL;
@@ -381,7 +400,9 @@ int setup_encoder_ctrl(int pi, char * cmd, int pin1, int pin2, int mode) {
 	}
 
     struct encoder * gpio_e = setupencoder(pi, pin1, pin2, encoder_rotate_cb, mode);
-	encoder_ctrls[numberofencoders].cmd_type = cmd_type;
+    if (!gpio_e)
+        return -1;
+    encoder_ctrls[numberofencoders].cmd_type = cmd_type;
     encoder_ctrls[numberofencoders].fragment = fragment;
 	encoder_ctrls[numberofencoders].fragment_neg = fragment_neg;
     encoder_ctrls[numberofencoders].gpio_encoder = gpio_e;
@@ -424,10 +445,8 @@ void handle_encoders(struct sbpd_server * server) {
         //  ignore if > 100: overflow
         //
         // Detent mode is simply value / 4
-        if ( encoder_ctrls[cnt].gpio_encoder->mode > 1 )
-            current_value = encoder_ctrls[cnt].gpio_encoder->detents;
-        else
-            current_value = encoder_ctrls[cnt].gpio_encoder->value;
+        current_value = encoder_value(encoder_ctrls[cnt].gpio_encoder,
+                                     encoder_ctrls[cnt].gpio_encoder->mode > 1);
 
         int delta = (int)(current_value - encoder_ctrls[cnt].last_value);
         if (delta > 100)
@@ -444,11 +463,10 @@ void handle_encoders(struct sbpd_server * server) {
                 return;
             }
 
-            loginfo("Encoder on GPIO %d, %d - value: %d, detents: %d, change: %d",
+            loginfo("Encoder on GPIO %d, %d - current value: %ld, change: %d",
                     encoder_ctrls[cnt].gpio_encoder->pin_a,
                     encoder_ctrls[cnt].gpio_encoder->pin_b,
-                    encoder_ctrls[cnt].gpio_encoder->value,
-                    encoder_ctrls[cnt].gpio_encoder->detents,
+                    current_value,
                     delta);
 
             char fragment[50];

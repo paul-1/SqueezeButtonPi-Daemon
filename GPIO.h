@@ -42,13 +42,21 @@
 //
 //
 //  Init GPIO functionality
-//  Connect to the pigpiod interface.
+//  Configure Linux GPIO character-device input lines.
 //
 //
 
 int init_GPIO();
-
+int start_GPIO(void);
+bool GPIO_failed(void);
 void shutdown_GPIO( int pi );
+struct encoder;
+long encoder_value(const struct encoder *encoder, bool detents);
+
+/* Keep command-line resistor values compatible with WiringPi. */
+#define PUD_OFF 0
+#define PUD_DOWN 1
+#define PUD_UP 2
 //
 // Buttons and Rotary Encoders
 // Rotary Encoder taken from https://github.com/astine/rotaryencoder
@@ -75,12 +83,12 @@ typedef void (*button_callback_t)(const struct button * button, int change, bool
 struct button {
     int pi;
     int pin;
-    volatile bool value;
+    bool value;
     button_callback_t callback;
-    uint32_t timepressed;
+    uint64_t timepressed;
+    bool tracking_press;
     bool pressed;
     int long_press_time;
-    int cb_id;
 };
 
 //
@@ -92,8 +100,9 @@ struct button {
 //  Parameters:
 //      pin: GPIO-Pin used in BCM numbering scheme
 //      callback: callback function to be called when button state changed
-//      edge: edge to be used for trigger events,
-//            one of INT_EDGE_RISING, INT_EDGE_FALLING or INT_EDGE_BOTH (the default)
+//      resist: PUD_OFF, PUD_DOWN or PUD_UP
+//      pressed: input level indicating a press
+//      long_press_time: threshold in milliseconds
 //  Returns: pointer to the new button structure
 //           The pointer will be NULL is the function failed for any reason
 //
@@ -119,13 +128,11 @@ struct encoder
     int pi;
     int pin_a;
     int pin_b;
-    volatile long value;
-    volatile long detents;
-    volatile int lastEncoded;
+    long value;
+    long detents;
+    int lastEncoded;
     rotaryencoder_callback_t callback;
     int mode;
-    int cba_id;
-    int cbb_id;
 };
 
 //

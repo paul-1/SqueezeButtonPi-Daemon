@@ -1,280 +1,370 @@
+// Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
+// All rights reserved.
 //
-//  GPIO.c
-//  SqueezeButtonPi
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+// * Redistributions of source code must retain the above copyright notice,
+//   this list of conditions and the following disclaimer.
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+// * Neither the name of ickStream nor the names of its contributors may be used
+//   to endorse or promote products derived from this software without specific
+//   prior written permission.
 //
-//  Low-Level code to configure and read buttons and rotary encoders.
-//  Calls callbacks on activity
-//
-//  Created by Jörg Schwieder on 02.02.17.
-//
-//
-//  Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
-//  All rights reserved.
-//
-//  Redistribution and use in source and binary forms, with or without
-//  modification, are permitted provided that the following conditions are met:
-//
-//   * Redistributions of source code must retain the above copyright
-//     notice, this list of conditions and the following disclaimer.
-//   * Redistributions in binary form must reproduce the above copyright
-//     notice, this list of conditions and the following disclaimer in the
-//     documentation and/or other materials provided with the distribution.
-//   * Neither the name of ickStream nor the names of its contributors
-//     may be used to endorse or promote products derived from this software
-//     without specific prior written permission.
-//
-//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-//  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-//  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-//  IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
-//  INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-//  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-//  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-//  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-//  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-//  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
 
+#define _GNU_SOURCE
 #include "GPIO.h"
-#include "sbpd.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/gpio.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
-#include <wiringPi.h>
-
-//
-//  Configured buttons
-//
-static int numberofbuttons = 0;
-//
-//  Pre-allocate encoder objects on the stack so we don't have to
-//  worry about freeing them
-//
-static struct button buttons[max_buttons];
-
-//
-// GetTime function
-//
-uint32_t gettime_ms(void) {
-	struct timespec ts;
-	if (!clock_gettime(CLOCK_REALTIME, &ts)) {
-		return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-	}
-	return 0;
-}
-
-//
-// number of milliseconds to debounce the button
-//
+#define MAX_LINES (max_buttons + 2 * max_encoders)
 #define NOPRESSTIME 50
-//
-//
-//  Button handler function
-//  Called by the GPIO interrupt when a button is pressed or released
-//  Depends on edge configuration.
-//  Checks all configred buttons for status changes and
-//  calls callback if state change detected.
-//
-//
-void updateButtons() {
-	uint32_t now;
-	now = gettime_ms();
-	struct button *button = buttons;
 
-	for (; button < buttons + numberofbuttons; button++) {
-		bool bit = digitalRead(button->pin);
-		bool presstype;
-		logdebug("%lu - %lu= %i  Pin Value=%i   Stored Value=%i", (unsigned long)now, (unsigned long)button->timepressed, (signed int)(now - button->timepressed), bit, button->value);
+static struct button buttons[max_buttons];
+static struct encoder encoders[max_encoders];
+static int numberofbuttons, numberofencoders, numberoflines;
+static int pins[MAX_LINES], resistors[MAX_LINES], levels[MAX_LINES];
+static unsigned offsets[MAX_LINES];
+static uint64_t snapshot_time;
+static int edge_fd = -1, wake_pipe[2] = {-1, -1};
+static pthread_t worker;
+static bool started, failed;
+static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
 
-		int increment = 0;
-		if ( (bit == button->pressed) && (button->timepressed == 0) ){	
-			button->timepressed = now;
-			increment = 0;
-		} else if (button->timepressed != 0){	
-			if ((signed int)(now - button->timepressed) < (signed int)NOPRESSTIME ) {
-				logdebug("No PRESS: %i", (signed int)(now - button->timepressed));
-				increment = 0;
-			} else if ((signed int)(now - button->timepressed) > (signed int)button->long_press_time ) {
-				loginfo("Long PRESS: %i", (signed int)(now - button->timepressed));
-				button->value = bit;
-				presstype = LONGPRESS;
-				increment = 1;
-			} else {
-				loginfo("Short PRESS: %i", (signed int)(now - button->timepressed));
-				button->value = bit;
-				presstype = SHORTPRESS;
-				increment = 1;
-			}
-			button->timepressed = 0;
-		}
-		if (button->callback && increment)
-			button->callback(button, increment, presstype);
-	}
+static int line_index(int pin)
+{
+    for (int i = 0; i < numberoflines; i++)
+        if (pins[i] == pin)
+            return i;
+    return -1;
 }
 
-//
-//
-//  Configuration function to define a button
-//  Should be run for every button you want to control
-//  For each button a button struct will be created
-//
-//  Parameters:
-//      pin: GPIO-Pin used in BCM numbering scheme
-//      callback: callback function to be called when button state changed
-//      edge: edge to be used for trigger events,
-//            one of INT_EDGE_RISING, INT_EDGE_FALLING or INT_EDGE_BOTH (the default)
-//  Returns: pointer to the new button structure
-//           The pointer will be NULL is the function failed for any reason
-//
-//
-struct button *setupbutton(int pi, int pin, button_callback_t b_callback, int resist, bool pressed, int long_press_time)
+static bool valid_pin(int pin)
 {
-    if (numberofbuttons > max_buttons)
-    {
-        logerr("Maximum number of buttons exceded: %i", max_buttons);
+    if (started || edge_fd >= 0 || pin < 0 || pin > 53 || line_index(pin) >= 0) {
+        logerr("Invalid, duplicate or late GPIO configuration: BCM %d", pin);
+        return false;
+    }
+    return true;
+}
+
+static void add_line(int pin, int resist)
+{
+    pins[numberoflines] = pin;
+    resistors[numberoflines++] = resist;
+}
+
+struct button *setupbutton(int pi, int pin, button_callback_t callback,
+                          int resist, bool pressed, int long_press_time)
+{
+    if (numberofbuttons >= max_buttons || !valid_pin(pin) ||
+        resist < PUD_OFF || resist > PUD_UP || long_press_time < 0) {
+        logerr("Cannot configure button on BCM %d", pin);
         return NULL;
     }
-
-    int edge = INT_EDGE_BOTH;  //Need to see both directions for button depressed time.
-
-    struct button *newbutton = buttons + numberofbuttons++;
-    newbutton->pi = pi;
-    newbutton->pin = pin;
-    newbutton->value = 0;
-    newbutton->callback = b_callback;
-    newbutton->timepressed = 0;
-    newbutton->pressed = pressed;
-    newbutton->long_press_time = long_press_time;
-    pinMode( pin, INPUT);
-    pullUpDnControl(pin, resist);
-    newbutton->cb_id = wiringPiISR((unsigned) pin, (unsigned)edge, &updateButtons);
-
-    return newbutton;
+    struct button *button = &buttons[numberofbuttons++];
+    *button = (struct button){.pi = pi, .pin = pin, .callback = callback,
+                             .pressed = pressed, .long_press_time = long_press_time};
+    add_line(pin, resist);
+    return button;
 }
 
-//
-//
-// Encoders
-// Rotary Encoder taken from https://github.com/astine/rotaryencoder
-// http://theatticlight.net/posts/Reading-a-Rotary-Encoder-from-a-Raspberry-Pi/
-//
-//  Configured encoders
-//
-static int numberofencoders = 0;
-//
-//  Pre-allocate encoder objects on the stack so we don't have to
-//  worry about freeing them
-//
-static struct encoder encoders[max_encoders];
-
-void updateEncoders()
+struct encoder *setupencoder(int pi, int pin_a, int pin_b,
+                            rotaryencoder_callback_t callback, int mode)
 {
-    struct encoder *encoder = encoders;
-    for (; encoder < encoders + numberofencoders; encoder++)
-    {
-        int MSB = digitalRead(encoder->pin_a);
-        int LSB = digitalRead(encoder->pin_b);
-        
-        int encoded = (MSB << 1) | LSB;
+    if (numberofencoders >= max_encoders || pin_a == pin_b ||
+        !valid_pin(pin_a) || !valid_pin(pin_b)) {
+        logerr("Cannot configure encoder on BCM %d, %d", pin_a, pin_b);
+        return NULL;
+    }
+    struct encoder *encoder = &encoders[numberofencoders++];
+    *encoder = (struct encoder){.pi = pi, .pin_a = pin_a, .pin_b = pin_b,
+                               .callback = callback, .mode = mode};
+    add_line(pin_a, PUD_UP);
+    add_line(pin_b, PUD_UP);
+    return encoder;
+}
+
+/* The bcm2835 pinctrl driver's line offsets are the BCM GPIO numbers. */
+static bool bcm2835_offsets(int fd, struct gpio_v2_line_request *request)
+{
+    struct gpiochip_info chip;
+    if (ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, &chip) < 0)
+        return false;
+    if (strcmp(chip.label, "pinctrl-bcm2835") != 0)
+        return false;
+    for (int i = 0; i < numberoflines; i++) {
+        if ((unsigned)pins[i] >= chip.lines)
+            return false;
+        request->offsets[i] = (unsigned)pins[i];
+    }
+    return true;
+}
+
+static int request_lines(void)
+{
+    struct gpio_v2_line_request request = {0};
+    const char *override = getenv("SBPD_GPIO_CHIP");
+    int chip_fd = -1;
+    for (int i = 0; i < 64; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/gpiochip%d", i);
+        int fd = open(override ? override : path, O_RDONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            if (bcm2835_offsets(fd, &request)) {
+                if (chip_fd >= 0) {
+                    close(fd);
+                    close(chip_fd);
+                    logerr("Ambiguous BCM GPIO chips; set SBPD_GPIO_CHIP");
+                    return -1;
+                }
+                chip_fd = fd;
+            } else {
+                close(fd);
+            }
+        }
+        if (override)
+            break;
+    }
+    if (chip_fd < 0) {
+        logerr("No accessible bcm2835 GPIO v2 chip for configured BCM pins");
+        return -1;
+    }
+    snprintf(request.consumer, sizeof(request.consumer), "sbpd");
+    request.num_lines = numberoflines;
+    request.event_buffer_size = 1024;
+    request.config.flags = GPIO_V2_LINE_FLAG_INPUT |
+                           GPIO_V2_LINE_FLAG_EDGE_RISING | GPIO_V2_LINE_FLAG_EDGE_FALLING;
+    for (int resist = PUD_OFF; resist <= PUD_UP; resist++) {
+        uint64_t mask = 0;
+        for (int i = 0; i < numberoflines; i++)
+            if (resistors[i] == resist)
+                mask |= 1ULL << i;
+        if (!mask)
+            continue;
+        struct gpio_v2_line_config_attribute *attr =
+            &request.config.attrs[request.config.num_attrs++];
+        attr->mask = mask;
+        attr->attr.id = GPIO_V2_LINE_ATTR_ID_FLAGS;
+        attr->attr.flags = request.config.flags |
+            (resist == PUD_UP ? GPIO_V2_LINE_FLAG_BIAS_PULL_UP :
+             resist == PUD_DOWN ? GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN :
+                                 GPIO_V2_LINE_FLAG_BIAS_DISABLED);
+    }
+    int rc = ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &request);
+    int saved_errno = errno;
+    close(chip_fd);
+    if (rc < 0) {
+        logerr("GPIO v2 edge/bias request failed: %s", strerror(saved_errno));
+        return -1;
+    }
+    edge_fd = request.fd;
+    for (int i = 0; i < numberoflines; i++)
+        offsets[i] = request.offsets[i];
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+        return -1;
+    snapshot_time = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+    struct gpio_v2_line_values values = {.mask = (1ULL << numberoflines) - 1};
+    if (ioctl(edge_fd, GPIO_V2_LINE_GET_VALUES_IOCTL, &values) < 0) {
+        logerr("GPIO initial values failed: %s", strerror(errno));
+        return -1;
+    }
+    for (int i = 0; i < numberoflines; i++)
+        levels[i] = !!(values.bits & (1ULL << i));
+    for (int i = 0; i < numberofbuttons; i++)
+        buttons[i].value = levels[line_index(buttons[i].pin)];
+    for (int i = 0; i < numberofencoders; i++)
+        encoders[i].lastEncoded = (levels[line_index(encoders[i].pin_a)] << 1) |
+                                  levels[line_index(encoders[i].pin_b)];
+    return 0;
+}
+
+static void dispatch_event(const struct gpio_v2_line_event *event, int index)
+{
+    int bit = event->id == GPIO_V2_LINE_EVENT_RISING_EDGE;
+    levels[index] = bit;
+    uint64_t now = event->timestamp_ns / 1000000;
+    for (int i = 0; i < numberofbuttons; i++) {
+        struct button *button = &buttons[i];
+        if (button->pin != pins[index])
+            continue;
+        button->value = bit;
+        if (bit == button->pressed) {
+            if (!button->tracking_press) {
+                button->tracking_press = true;
+                button->timepressed = now;
+            }
+        } else if (button->tracking_press) {
+            uint64_t duration = now - button->timepressed;
+            button->tracking_press = false;
+            if (duration >= NOPRESSTIME && button->callback)
+                button->callback(button, 1, duration > (uint64_t)button->long_press_time);
+        }
+    }
+    for (int i = 0; i < numberofencoders; i++) {
+        struct encoder *encoder = &encoders[i];
+        if (encoder->pin_a != pins[index] && encoder->pin_b != pins[index])
+            continue;
+        int encoded = (levels[line_index(encoder->pin_a)] << 1) |
+                       levels[line_index(encoder->pin_b)];
         int sum = (encoder->lastEncoded << 2) | encoded;
-        
         int increment = 0;
-        
-        if(sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) increment = 1;
-        if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) increment = -1;
-        
+        if (sum == 13 || sum == 4 || sum == 2 || sum == 11) increment = 1;
+        if (sum == 14 || sum == 7 || sum == 1 || sum == 8) increment = -1;
         encoder->value += increment;
         encoder->lastEncoded = encoded;
         encoder->detents = encoder->value / 4;
-
-        if (encoder->callback)
+        if (encoder->callback && increment)
             encoder->callback(encoder, increment);
     }
 }
 
-//
-//
-//  Configuration function to define a rotary encoder
-//  Should be run for every rotary encoder you want to control
-//  For each encoder a button struct will be created
-//
-//  Parameters:
-//      pin_a, pin_b: GPIO-Pins used in BCM numbering scheme
-//      callback: callback function to be called when encoder state changed
-//      mode: operate in ENCODER_MODE_DETENT or , ENCODER_MODE_STEP
-//
-//  Returns: pointer to the new encoder structure
-//           The pointer will be NULL is the function failed for any reason
-//
-//
-struct encoder *setupencoder(int pi,
-                             int pin_a,
-                             int pin_b,
-                             rotaryencoder_callback_t e_callback,
-                             int mode)
+static void *wait_edges(void *unused)
 {
-    if (numberofencoders > max_encoders)
-    {
-        logerr("Maximum number of encodered exceded: %i", max_encoders);
-        return NULL;
+    (void)unused;
+    struct pollfd fds[] = {{wake_pipe[0], POLLIN, 0}, {edge_fd, POLLIN, 0}};
+    uint32_t sequence = 0;
+    while (true) {
+        int rc = poll(fds, 2, -1);
+        if (rc < 0 && errno == EINTR)
+            continue;
+        if (rc < 0) {
+            logerr("GPIO event poll failed: %s", strerror(errno));
+            break;
+        }
+        if (fds[0].revents & POLLIN)
+            return NULL;
+        if ((fds[0].revents | fds[1].revents) & (POLLERR | POLLHUP | POLLNVAL)) {
+            logerr("GPIO event descriptors failed: wake=%x events=%x",
+                   fds[0].revents, fds[1].revents);
+            break;
+        }
+        if (!(fds[1].revents & POLLIN))
+            continue;
+        struct gpio_v2_line_event event;
+        ssize_t size;
+        do {
+            size = read(edge_fd, &event, sizeof(event));
+        } while (size < 0 && errno == EINTR);
+        if (size != sizeof(event) || event.seqno != sequence + 1 ||
+            (event.id != GPIO_V2_LINE_EVENT_RISING_EDGE &&
+             event.id != GPIO_V2_LINE_EVENT_FALLING_EDGE)) {
+            logerr("GPIO event read/sequence error: size=%zd seq=%u expected=%u id=%u errno=%s",
+                   size, event.seqno, sequence + 1, event.id,
+                   size < 0 ? strerror(errno) : "none");
+            break;
+        }
+        sequence = event.seqno;
+        int index = -1;
+        /* Offset is not necessarily BCM numbering. */
+        for (int i = 0; i < numberoflines; i++)
+            if (offsets[i] == event.offset)
+                index = i;
+        if (index < 0)
+            break;
+        if (event.timestamp_ns <= snapshot_time)
+            continue;
+        pthread_mutex_lock(&state_lock);
+        dispatch_event(&event, index);
+        pthread_mutex_unlock(&state_lock);
     }
-
-    struct encoder *newencoder = encoders + numberofencoders++;
-    newencoder->pi = pi;
-    newencoder->pin_a = pin_a;
-    newencoder->pin_b = pin_b;
-    newencoder->value = 0;
-    newencoder->detents = 0;
-    newencoder->lastEncoded = 0;
-    newencoder->callback = e_callback;
-    newencoder->mode = mode;
-
-    pinMode(pin_a, INPUT);
-    pinMode(pin_b, INPUT);
-    pullUpDnControl(pin_a, PUD_UP);
-    pullUpDnControl(pin_b, PUD_UP);
-
-    newencoder->lastEncoded = (digitalRead(pin_a) << 1) | digitalRead(pin_b);
-
-    newencoder->cba_id = wiringPiISR((unsigned) pin_a, INT_EDGE_BOTH, &updateEncoders);
-    newencoder->cbb_id = wiringPiISR((unsigned) pin_b, INT_EDGE_BOTH, &updateEncoders);
-
-    return newencoder;
+    logerr("GPIO event worker stopped unexpectedly");
+    pthread_mutex_lock(&state_lock);
+    failed = true;
+    pthread_mutex_unlock(&state_lock);
+    return NULL;
 }
 
-//
-//
-//  Init GPIO functionality
-//  Connect to the pigpiod interface.
-//
-//
-
-int init_GPIO() {
-	loginfo("Initializing GPIO");
-	int pi = wiringPiSetupGpio(); /* Connect to Pi. NULL means the local pigpiod*/
-	return pi;
+int init_GPIO(void)
+{
+    loginfo("Initializing event-driven GPIO");
+    return 0;
 }
 
-void shutdown_GPIO( int pi) {
-    struct button *button = buttons;
-    struct encoder *encoder = encoders;
-    loginfo("Disconnecting from gpio");
-    for (; button < buttons + numberofbuttons; button++) {
-        if ( wiringPiISRStop(button->pin) == 0 ){
-            loginfo("GPIO %d button callback cancelled.", button->pin);
-        } else {
-            loginfo("Error cancelling callback for GPIO %d.", button->pin);
-        }
+int start_GPIO(void)
+{
+    if (started)
+        return -1;
+    if (!numberoflines)
+        return 0;
+    if (request_lines() < 0 || pipe2(wake_pipe, O_CLOEXEC) < 0) {
+        logerr("GPIO startup failed: %s", strerror(errno));
+        shutdown_GPIO(0);
+        return -1;
     }
-    for (; encoder < encoders + numberofencoders; encoder++) {
-        if ( wiringPiISRStop(encoder->pin_a) == 0 ) {
-             loginfo("GPIO %d encoder callback cancelled.", encoder->pin_a);
-        } else {
-             loginfo("Error cancelling callback for GPIO %d.", encoder->pin_a);
-        }
-        if ( wiringPiISRStop(encoder->pin_b) == 0 ) {
-             loginfo("GPIO %d encoder callback cancelled.", encoder->pin_b);
-        } else {
-             loginfo("Error cancelling callback for GPIO %d.", encoder->pin_b);
-        }
+    pthread_attr_t attr;
+    struct sched_param priority = {.sched_priority = 0};
+    int rc = pthread_attr_init(&attr);
+    if (rc == 0) {
+        rc = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+        if (!rc) rc = pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
+        if (!rc) rc = pthread_attr_setschedparam(&attr, &priority);
+        if (!rc) rc = pthread_create(&worker, &attr, wait_edges, NULL);
+        pthread_attr_destroy(&attr);
     }
+    if (rc) {
+        logerr("Cannot start normal-priority GPIO worker: %s", strerror(rc));
+        shutdown_GPIO(0);
+        return -1;
+    }
+    started = true;
+    return 0;
 }
 
+bool GPIO_failed(void)
+{
+    pthread_mutex_lock(&state_lock);
+    bool result = failed;
+    pthread_mutex_unlock(&state_lock);
+    return result;
+}
+
+long encoder_value(const struct encoder *encoder, bool detents)
+{
+    pthread_mutex_lock(&state_lock);
+    long value = detents ? encoder->detents : encoder->value;
+    pthread_mutex_unlock(&state_lock);
+    return value;
+}
+
+void shutdown_GPIO(int pi)
+{
+    (void)pi;
+    if (started) {
+        ssize_t rc;
+        do {
+            rc = write(wake_pipe[1], "x", 1);
+        } while (rc < 0 && errno == EINTR);
+        if (rc != 1) {
+            logerr("GPIO shutdown wake failed: %s", strerror(errno));
+            close(wake_pipe[1]);
+            wake_pipe[1] = -1;
+        }
+        pthread_join(worker, NULL);
+        started = false;
+    }
+    if (edge_fd >= 0) close(edge_fd);
+    if (wake_pipe[0] >= 0) close(wake_pipe[0]);
+    if (wake_pipe[1] >= 0) close(wake_pipe[1]);
+    edge_fd = wake_pipe[0] = wake_pipe[1] = -1;
+}
