@@ -79,8 +79,9 @@ State is synchronized; no lock is held across main-thread command I/O.
 There are no WiringPi ISR threads, real-time priority requests, or periodic
 0.5 ms GPIO waits. The main loop retains its 100 ms command aggregation and
 synchronous server requests. Pending button actions still coalesce between
-main-loop passes. GPIO queue overflow/read failures stop the daemon explicitly
-instead of silently miscounting. Shutdown wakes and joins the GPIO worker
+main-loop passes. Per-line event sequence gaps indicate dropped kernel events;
+sbpd logs a warning, re-reads current levels and discards older queued events
+instead of stopping. GPIO read failures stop the daemon explicitly. Shutdown wakes and joins the GPIO worker
 before curl/uinput cleanup.
 
 This is an application-side replacement for WiringPi's timed ISR waits, **not

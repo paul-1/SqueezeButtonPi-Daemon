@@ -119,6 +119,38 @@ static int chip_priority(const char *label)
     return 0;
 }
 
+/* Caller holds state_lock once the worker is running. */
+static int sync_levels(bool keep_presses)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+        logerr("Cannot timestamp GPIO levels: %s", strerror(errno));
+        return -1;
+    }
+    snapshot_time = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+    enum gpiod_line_value values[MAX_LINES];
+    if (gpiod_line_request_get_values_subset(line_request, numberoflines, offsets, values) < 0) {
+        logerr("GPIO values read failed: %s", strerror(errno));
+        return -1;
+    }
+    for (int i = 0; i < numberoflines; i++)
+        levels[i] = values[i] == GPIOD_LINE_VALUE_ACTIVE;
+    for (int i = 0; i < numberofbuttons; i++) {
+        struct button *button = &buttons[i];
+        button->value = levels[line_index(button->pin)];
+        if (!keep_presses || button->value != button->pressed)
+            button->tracking_press = false;
+        else if (!button->tracking_press) {
+            button->tracking_press = true;
+            button->timepressed = snapshot_time / 1000000;
+        }
+    }
+    for (int i = 0; i < numberofencoders; i++)
+        encoders[i].lastEncoded = (levels[line_index(encoders[i].pin_a)] << 1) |
+                                  levels[line_index(encoders[i].pin_b)];
+    return 0;
+}
+
 static int request_lines(void)
 {
     const char *override = getenv("SBPD_GPIO_CHIP");
@@ -212,24 +244,7 @@ config_done:
         logerr("Cannot allocate GPIO event buffer: %s", strerror(errno));
         return -1;
     }
-    struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
-        logerr("Cannot timestamp GPIO initialization: %s", strerror(errno));
-        return -1;
-    }
-    snapshot_time = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
-    enum gpiod_line_value values[MAX_LINES];
-    if (gpiod_line_request_get_values_subset(line_request, numberoflines, offsets, values) < 0) {
-        logerr("GPIO initial values failed: %s", strerror(errno));
-        return -1;
-    }
-    for (int i = 0; i < numberoflines; i++)
-        levels[i] = values[i] == GPIOD_LINE_VALUE_ACTIVE;
-    for (int i = 0; i < numberofbuttons; i++)
-        buttons[i].value = levels[line_index(buttons[i].pin)];
-    for (int i = 0; i < numberofencoders; i++)
-        encoders[i].lastEncoded = (levels[line_index(encoders[i].pin_a)] << 1) |
-                                  levels[line_index(encoders[i].pin_b)];
+    return sync_levels(false);
     return 0;
 discovery_error:
     if (chip) gpiod_chip_close(chip);
@@ -281,7 +296,7 @@ static void *wait_edges(void *unused)
 {
     (void)unused;
     struct pollfd fds[] = {{wake_pipe[0], POLLIN, 0}, {edge_fd, POLLIN, 0}};
-    uint32_t sequence = 0;
+    unsigned long line_sequence[MAX_LINES] = {0};
     while (true) {
         int rc = poll(fds, 2, -1);
         if (rc < 0 && errno == EINTR)
@@ -309,16 +324,26 @@ static void *wait_edges(void *unused)
         }
         for (int j = 0; j < count; j++) {
             struct gpiod_edge_event *event = gpiod_edge_event_buffer_get_event(event_buffer, j);
-            uint32_t seqno = (uint32_t)gpiod_edge_event_get_global_seqno(event);
-            if (seqno != sequence + 1) {
-                logerr("GPIO event queue overflow: sequence %u, expected %u", seqno, sequence + 1);
-                goto worker_failed;
-            }
-            sequence = seqno;
             int index = line_index((int)gpiod_edge_event_get_line_offset(event));
             if (index < 0) {
                 logerr("GPIO event for an unrequested line");
                 goto worker_failed;
+            }
+            /*
+             * The request-wide seqno can skip when interrupts coalesce.
+             * Per-line seqnos are contiguous unless the kernel FIFO dropped events.
+             */
+            unsigned long seqno = gpiod_edge_event_get_line_seqno(event);
+            bool lost = line_sequence[index] && seqno != line_sequence[index] + 1;
+            line_sequence[index] = seqno;
+            if (lost) {
+                logwarn("GPIO events lost on BCM %d; resynchronizing levels", pins[index]);
+                pthread_mutex_lock(&state_lock);
+                rc = sync_levels(true);
+                pthread_mutex_unlock(&state_lock);
+                if (rc < 0)
+                    goto worker_failed;
+                continue;
             }
             if (gpiod_edge_event_get_timestamp_ns(event) <= snapshot_time)
                 continue;
