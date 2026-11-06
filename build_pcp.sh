@@ -32,8 +32,8 @@ SRCDIR=$(pwd)
 mkdir -p $TMPDIR/usr/local/bin
 mkdir -p $TMPDIR/usr/local/share/$TMPDIR
 cp sbpd $TMPDIR/usr/local/bin/
-cp sbpd_commands.cfg $TMPDIR/usr/local/share/$TMPDIR/
-cp LICENSE $TMPDIR/usr/local/share/$TMPDIR/
+cp sbpd_commands.cfg $TMPDIR/usr/local/share/$EXTNAM/
+cp LICENSE $TMPDIR/usr/local/share/$EXTNAM/
 cd $TMPDIR
 find * -not -type d > $EXTNAM.tcz.list
 cd ..
