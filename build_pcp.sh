@@ -6,6 +6,7 @@ tce-load -wil compiletc curl-dev libgpiod-dev squashfs-tools
 EXTNAM=pcp-sbpd
 TMPDIR=/tmp/$EXTNAM
 TCZINFO=$EXTNAM.tcz.info
+TCZDEP=$EXTNAM.tcz.dep
 
 rm -rf $TMPDIR
 
@@ -43,7 +44,11 @@ mksquashfs $EXTNAM $EXTNAM.tcz -b 16384
 md5sum $EXTNAM.tcz > $EXTNAM.tcz.md5.txt
 
 cd $EXTNAM
-mv ../$EXTNAM.tcz* .
+mv ../$EXTNAM.tcz*
+
+echo -e "curl.tcz" > $TCZDEP
+echo -e "libgpiod.tcz" > $TCZDEP
+
 
 echo -e "Title:          $EXTNAM.tcz" > $TCZINFO
 echo -e "Description:    SqueezeButtonPi." >> $TCZINFO
