@@ -28,12 +28,12 @@
 #include "GPIO.h"
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/gpio.h>
+#include <gpiod.h>
+#include <glob.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 #define MAX_LINES (max_buttons + 2 * max_encoders)
@@ -46,6 +46,8 @@ static int pins[MAX_LINES], resistors[MAX_LINES], levels[MAX_LINES];
 static unsigned offsets[MAX_LINES];
 static uint64_t snapshot_time;
 static int edge_fd = -1, wake_pipe[2] = {-1, -1};
+static struct gpiod_line_request *line_request;
+static struct gpiod_edge_event_buffer *event_buffer;
 static pthread_t worker;
 static bool started, failed;
 static pthread_mutex_t state_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -60,7 +62,7 @@ static int line_index(int pin)
 
 static bool valid_pin(int pin)
 {
-    if (started || edge_fd >= 0 || pin < 0 || pin > 53 || line_index(pin) >= 0) {
+    if (started || edge_fd >= 0 || pin < 0 || pin > 57 || line_index(pin) >= 0) {
         logerr("Invalid, duplicate or late GPIO configuration: BCM %d", pin);
         return false;
     }
@@ -104,106 +106,142 @@ struct encoder *setupencoder(int pi, int pin_a, int pin_b,
     return encoder;
 }
 
-/* The bcm2835 pinctrl driver's line offsets are the BCM GPIO numbers. */
-static bool bcm2835_offsets(int fd, struct gpio_v2_line_request *request)
+/* Pi 5/CM5 header GPIOs belong to RP1, not the BCM2712 SoC controllers. */
+static int chip_priority(const char *label)
 {
-    struct gpiochip_info chip;
-    if (ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, &chip) < 0)
-        return false;
-    if (strcmp(chip.label, "pinctrl-bcm2835") != 0)
-        return false;
-    for (int i = 0; i < numberoflines; i++) {
-        if ((unsigned)pins[i] >= chip.lines)
-            return false;
-        request->offsets[i] = (unsigned)pins[i];
-    }
-    return true;
+    if (!label)
+        return 0;
+    if (!strcmp(label, "pinctrl-rp1"))
+        return 2;
+    if (!strcmp(label, "pinctrl-bcm2835") ||
+        !strcmp(label, "pinctrl-bcm2711"))
+        return 1;
+    return 0;
 }
 
 static int request_lines(void)
 {
-    struct gpio_v2_line_request request = {0};
     const char *override = getenv("SBPD_GPIO_CHIP");
-    int chip_fd = -1;
-    for (int i = 0; i < 64; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dev/gpiochip%d", i);
-        int fd = open(override ? override : path, O_RDONLY | O_CLOEXEC);
-        if (fd >= 0) {
-            if (bcm2835_offsets(fd, &request)) {
-                if (chip_fd >= 0) {
-                    close(fd);
-                    close(chip_fd);
-                    logerr("Ambiguous BCM GPIO chips; set SBPD_GPIO_CHIP");
-                    return -1;
-                }
-                chip_fd = fd;
-            } else {
-                close(fd);
-            }
+    glob_t paths = {0};
+    struct gpiod_chip *chip = NULL;
+    int priority = 0;
+    bool ambiguous = false;
+    if (!override) {
+        int rc = glob("/dev/gpiochip*", 0, NULL, &paths);
+        if (rc != 0) {
+            globfree(&paths);
+            logerr("Cannot discover GPIO chips (glob error %d)", rc);
+            return -1;
         }
-        if (override)
-            break;
     }
-    if (chip_fd < 0) {
-        logerr("No accessible bcm2835 GPIO v2 chip for configured BCM pins");
+    size_t count = override ? 1 : paths.gl_pathc;
+    for (size_t i = 0; i < count; i++) {
+        const char *path = override ? override : paths.gl_pathv[i];
+        struct gpiod_chip *candidate = gpiod_chip_open(path);
+        if (!candidate) {
+            logerr("Cannot open GPIO chip %s: %s", path, strerror(errno));
+            goto discovery_error;
+        }
+        struct gpiod_chip_info *info = gpiod_chip_get_info(candidate);
+        if (!info) {
+            logerr("Cannot read GPIO chip %s information: %s", path, strerror(errno));
+            gpiod_chip_close(candidate);
+            goto discovery_error;
+        }
+        int rank = chip_priority(gpiod_chip_info_get_label(info));
+        size_t lines = gpiod_chip_info_get_num_lines(info);
+        for (int j = 0; j < numberoflines; j++)
+            if ((unsigned)pins[j] >= lines)
+                rank = 0;
+        gpiod_chip_info_free(info);
+        if (rank > priority) {
+            if (chip)
+                gpiod_chip_close(chip);
+            chip = candidate;
+            priority = rank;
+            ambiguous = false;
+        } else {
+            if (rank && rank == priority)
+                ambiguous = true;
+            gpiod_chip_close(candidate);
+        }
+    }
+    globfree(&paths);
+    if (!chip || ambiguous) {
+        if (chip)
+            gpiod_chip_close(chip);
+        logerr("No unique Raspberry Pi GPIO chip for BCM pins; check SBPD_GPIO_CHIP and permissions");
         return -1;
     }
-    snprintf(request.consumer, sizeof(request.consumer), "sbpd");
-    request.num_lines = numberoflines;
-    request.event_buffer_size = 1024;
-    request.config.flags = GPIO_V2_LINE_FLAG_INPUT |
-                           GPIO_V2_LINE_FLAG_EDGE_RISING | GPIO_V2_LINE_FLAG_EDGE_FALLING;
-    for (int resist = PUD_OFF; resist <= PUD_UP; resist++) {
-        uint64_t mask = 0;
-        for (int i = 0; i < numberoflines; i++)
-            if (resistors[i] == resist)
-                mask |= 1ULL << i;
-        if (!mask)
-            continue;
-        struct gpio_v2_line_config_attribute *attr =
-            &request.config.attrs[request.config.num_attrs++];
-        attr->mask = mask;
-        attr->attr.id = GPIO_V2_LINE_ATTR_ID_FLAGS;
-        attr->attr.flags = request.config.flags |
-            (resist == PUD_UP ? GPIO_V2_LINE_FLAG_BIAS_PULL_UP :
-             resist == PUD_DOWN ? GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN :
-                                 GPIO_V2_LINE_FLAG_BIAS_DISABLED);
+    struct gpiod_line_config *config = gpiod_line_config_new();
+    struct gpiod_line_settings *settings = gpiod_line_settings_new();
+    struct gpiod_request_config *request_config = gpiod_request_config_new();
+    int rc = -1;
+    if (!config || !settings || !request_config)
+        goto config_done;
+    gpiod_request_config_set_consumer(request_config, "sbpd");
+    gpiod_request_config_set_event_buffer_size(request_config, 1024);
+    for (int i = 0; i < numberoflines; i++) {
+        offsets[i] = (unsigned)pins[i];
+        enum gpiod_line_bias bias = resistors[i] == PUD_UP ? GPIOD_LINE_BIAS_PULL_UP :
+            resistors[i] == PUD_DOWN ? GPIOD_LINE_BIAS_PULL_DOWN : GPIOD_LINE_BIAS_DISABLED;
+        if (gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT) < 0 ||
+            gpiod_line_settings_set_edge_detection(settings, GPIOD_LINE_EDGE_BOTH) < 0 ||
+            gpiod_line_settings_set_event_clock(settings, GPIOD_LINE_CLOCK_MONOTONIC) < 0 ||
+            gpiod_line_settings_set_bias(settings, bias) < 0 ||
+            gpiod_line_config_add_line_settings(config, &offsets[i], 1, settings) < 0)
+            goto config_done;
     }
-    int rc = ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &request);
+    line_request = gpiod_chip_request_lines(chip, request_config, config);
+    if (line_request)
+        rc = 0;
+config_done:
+    ;
     int saved_errno = errno;
-    close(chip_fd);
+    if (config) gpiod_line_config_free(config);
+    if (settings) gpiod_line_settings_free(settings);
+    if (request_config) gpiod_request_config_free(request_config);
+    gpiod_chip_close(chip);
     if (rc < 0) {
-        logerr("GPIO v2 edge/bias request failed: %s", strerror(saved_errno));
+        logerr("GPIO edge/bias request failed: %s", strerror(saved_errno));
         return -1;
     }
-    edge_fd = request.fd;
-    for (int i = 0; i < numberoflines; i++)
-        offsets[i] = request.offsets[i];
-    struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+    edge_fd = gpiod_line_request_get_fd(line_request);
+    event_buffer = gpiod_edge_event_buffer_new(64);
+    if (!event_buffer) {
+        logerr("Cannot allocate GPIO event buffer: %s", strerror(errno));
         return -1;
+    }
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+        logerr("Cannot timestamp GPIO initialization: %s", strerror(errno));
+        return -1;
+    }
     snapshot_time = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
-    struct gpio_v2_line_values values = {.mask = (1ULL << numberoflines) - 1};
-    if (ioctl(edge_fd, GPIO_V2_LINE_GET_VALUES_IOCTL, &values) < 0) {
+    enum gpiod_line_value values[MAX_LINES];
+    if (gpiod_line_request_get_values_subset(line_request, numberoflines, offsets, values) < 0) {
         logerr("GPIO initial values failed: %s", strerror(errno));
         return -1;
     }
     for (int i = 0; i < numberoflines; i++)
-        levels[i] = !!(values.bits & (1ULL << i));
+        levels[i] = values[i] == GPIOD_LINE_VALUE_ACTIVE;
     for (int i = 0; i < numberofbuttons; i++)
         buttons[i].value = levels[line_index(buttons[i].pin)];
     for (int i = 0; i < numberofencoders; i++)
         encoders[i].lastEncoded = (levels[line_index(encoders[i].pin_a)] << 1) |
                                   levels[line_index(encoders[i].pin_b)];
     return 0;
+discovery_error:
+    if (chip) gpiod_chip_close(chip);
+    globfree(&paths);
+    return -1;
 }
 
-static void dispatch_event(const struct gpio_v2_line_event *event, int index)
+static void dispatch_event(struct gpiod_edge_event *event, int index)
 {
-    int bit = event->id == GPIO_V2_LINE_EVENT_RISING_EDGE;
+    int bit = gpiod_edge_event_get_event_type(event) == GPIOD_EDGE_EVENT_RISING_EDGE;
     levels[index] = bit;
-    uint64_t now = event->timestamp_ns / 1000000;
+    uint64_t now = gpiod_edge_event_get_timestamp_ns(event) / 1000000;
     for (int i = 0; i < numberofbuttons; i++) {
         struct button *button = &buttons[i];
         if (button->pin != pins[index])
@@ -261,33 +299,35 @@ static void *wait_edges(void *unused)
         }
         if (!(fds[1].revents & POLLIN))
             continue;
-        struct gpio_v2_line_event event;
-        ssize_t size;
+        int count;
         do {
-            size = read(edge_fd, &event, sizeof(event));
-        } while (size < 0 && errno == EINTR);
-        if (size != sizeof(event) || event.seqno != sequence + 1 ||
-            (event.id != GPIO_V2_LINE_EVENT_RISING_EDGE &&
-             event.id != GPIO_V2_LINE_EVENT_FALLING_EDGE)) {
-            logerr("GPIO event read/sequence error: size=%zd seq=%u expected=%u id=%u errno=%s",
-                   size, event.seqno, sequence + 1, event.id,
-                   size < 0 ? strerror(errno) : "none");
+            count = gpiod_line_request_read_edge_events(line_request, event_buffer, 64);
+        } while (count < 0 && errno == EINTR);
+        if (count <= 0) {
+            logerr("GPIO event read failed: %s", count < 0 ? strerror(errno) : "no events");
             break;
         }
-        sequence = event.seqno;
-        int index = -1;
-        /* Offset is not necessarily BCM numbering. */
-        for (int i = 0; i < numberoflines; i++)
-            if (offsets[i] == event.offset)
-                index = i;
-        if (index < 0)
-            break;
-        if (event.timestamp_ns <= snapshot_time)
-            continue;
-        pthread_mutex_lock(&state_lock);
-        dispatch_event(&event, index);
-        pthread_mutex_unlock(&state_lock);
+        for (int j = 0; j < count; j++) {
+            struct gpiod_edge_event *event = gpiod_edge_event_buffer_get_event(event_buffer, j);
+            uint32_t seqno = (uint32_t)gpiod_edge_event_get_global_seqno(event);
+            if (seqno != sequence + 1) {
+                logerr("GPIO event queue overflow: sequence %u, expected %u", seqno, sequence + 1);
+                goto worker_failed;
+            }
+            sequence = seqno;
+            int index = line_index((int)gpiod_edge_event_get_line_offset(event));
+            if (index < 0) {
+                logerr("GPIO event for an unrequested line");
+                goto worker_failed;
+            }
+            if (gpiod_edge_event_get_timestamp_ns(event) <= snapshot_time)
+                continue;
+            pthread_mutex_lock(&state_lock);
+            dispatch_event(event, index);
+            pthread_mutex_unlock(&state_lock);
+        }
     }
+worker_failed:
     logerr("GPIO event worker stopped unexpectedly");
     pthread_mutex_lock(&state_lock);
     failed = true;
@@ -363,7 +403,10 @@ void shutdown_GPIO(int pi)
         pthread_join(worker, NULL);
         started = false;
     }
-    if (edge_fd >= 0) close(edge_fd);
+    if (event_buffer) gpiod_edge_event_buffer_free(event_buffer);
+    if (line_request) gpiod_line_request_release(line_request);
+    event_buffer = NULL;
+    line_request = NULL;
     if (wake_pipe[0] >= 0) close(wake_pipe[0]);
     if (wake_pipe[1] >= 0) close(wake_pipe[1]);
     edge_fd = wake_pipe[0] = wake_pipe[1] = -1;

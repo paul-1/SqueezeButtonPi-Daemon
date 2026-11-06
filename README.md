@@ -35,25 +35,34 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Dependencies
 
-SqueezeButtonPi uses libCurl, POSIX threads and the Linux GPIO character-device
-v2 API (kernel **5.10 or newer**, with matching `linux/gpio.h` development
-headers). The GPIO driver must support input edge events and the configured
-pull-up/pull-down/disabled bias. Raspberry Pi kernel 6.18 provides this API;
-no WiringPi, pigpio, pigpiod or libgpiod library is required.
-
-Build with `make`; run the hardware-independent GPIO and control mock tests with
-`make test-gpio`. A C compiler, make and libCurl development files are required
-for the daemon; the tests need only the compiler, Linux GPIO headers and pthreads.
+SqueezeButtonPi uses libCurl, POSIX threads and **libgpiod 2.0.2 or newer**
+(including 2.3.2). The Linux GPIO character-device v2 API requires kernel
+**5.10 or newer**, with GPIO input edge and bias support enabled. Build with
+`make`; a C compiler, make, pkg-config and development files for libCurl and
+libgpiod are required. libgpiod must also be installed on the target system.
+No WiringPi, pigpio or pigpiod is required.
 
 ### Event-driven GPIO
 
 BCM pin numbers and command-line resistor values remain unchanged. At startup,
-sbpd searches `/dev/gpiochip0` through `/dev/gpiochip63` for the
-`pinctrl-bcm2835` chip and maps BCM numbers to its matching line offsets. Set
-`SBPD_GPIO_CHIP=/dev/gpiochipN` to restrict the search. The process needs read
-access to the chip and exclusive ownership of the configured lines. This mapping
-is for the BCM2835 GPIO controller used by Raspberry Pi Zero/Zero W; other GPIO
-controllers are not currently supported.
+sbpd discovers `/dev/gpiochip*` by controller identity, not a fixed chip number
+or line names (which may be changed by device-tree overlays). Supported labels
+are `pinctrl-bcm2835` (Pi 1/2/3, Zero/Zero W/Zero 2 W and CM1/CM3),
+`pinctrl-bcm2711` (Pi 4/400 and CM4), and `pinctrl-rp1` (Pi 5/500 and CM5).
+For these controllers, the line offset is the BCM GPIO number. RP1 is preferred
+when present; BCM2712's internal/AON controllers are deliberately not selected
+for Pi 5 header GPIOs. This follows the controller distinction used by
+[Raspberry Pi pinctrl](https://github.com/raspberrypi/utils/tree/master/pinctrl),
+without importing its MMIO implementation.
+
+Set `SBPD_GPIO_CHIP=/dev/gpiochipN` to restrict discovery to a supported chip.
+Ambiguous chips require this explicit selection. All configured lines must fit
+the selected controller. On Compute Modules the carrier determines which lines
+are exposed; GPIO numbers are controller-local, not physical connector numbers.
+Older 26-pin Pi headers also retain BCM numbering (including GPIO21 rather than
+GPIO27 on revision 1 boards). The process needs read access to the discovered
+chips and exclusive ownership of the configured lines. Unsupported controllers
+are rejected rather than assuming that chip zero is the header controller.
 Invalid/duplicate pins, unsupported bias, busy lines, unavailable chips and
 worker startup failures are explicit errors; there is no polling fallback.
 
@@ -77,7 +86,7 @@ before curl/uinput cleanup.
 This is an application-side replacement for WiringPi's timed ISR waits, **not
 a kernel fix**: it removes their idle wakeups (about 8,000/s for four ISR lines)
 without changing kernel scheduling or masking kernel warnings. Real Raspberry
-Pi testing is still needed for board line names, bias support and rapid encoder
+Pi testing is still needed for controller discovery, bias support and rapid encoder
 bursts; the requested kernel event queue is 1,024 events.
 
 ## Configuration
