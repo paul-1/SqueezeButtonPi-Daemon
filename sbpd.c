@@ -12,6 +12,7 @@
 //
 //
 //  Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
+//  Copyright (c) 2026, paul-1
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
@@ -78,7 +79,7 @@ static int sysloglevel = LOG_ALERT;
 //  Argument Parsing
 //
 const char *argp_program_version = USER_AGENT " " VERSION;
-const char *argp_program_bug_address = "<coolio@penguinlovesmusic.com>";
+const char *argp_program_bug_address = "https://forums.lyrion.org/";
 static error_t parse_opt(int key, char *arg, struct argp_state *state);
 static error_t parse_arg( int pi );
 //
