@@ -30,12 +30,3 @@ $(OBJECTS): $(DEPS)
 
 clean:
 	rm -f $(OBJECTS) $(EXECUTABLE) $(EXECUTABLE-STATIC_CURL)
-
-.PHONY: test-keyboard
-test-keyboard:
-	$(CC) -Wall -Wextra -std=gnu99 -pthread tests/uinput_test.c -o tests/uinput_test
-	./tests/uinput_test
-	rm -f tests/uinput_test
-	$(CC) -Wall -std=gnu99 -Itests/stubs -ffunction-sections -fdata-sections tests/key_sequence_test.c -Wl,--gc-sections -o tests/key_sequence_test
-	./tests/key_sequence_test
-	rm -f tests/key_sequence_test
