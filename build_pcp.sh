@@ -43,12 +43,14 @@ md5sum $EXTNAM.tcz > $EXTNAM.tcz.md5.txt
 cd $EXTNAM
 mv ../$EXTNAM.tcz* .
 
-echo -e "Title:\t\t$EXTNAM.tcz" > $TCZINFO
-echo -e "Description:\tSqueezeButtonPi." >> $TCZINFO
-echo -e "Version:\t$(grep VERSION $SRCDIR/sbpd.h | awk -F' ' '{printf "%s", $3}')" >> $TCZINFO
-echo -e "Authors:\tJoerg Schwieder" >> $TCZINFO
-echo -e "Original-site:\thttps://github.com/coolio107/SqueezeButtonPi-Daemon" >> $TCZINFO
-echo -e "Copying-policy:\tBSD-3-Clause" >> $TCZINFO
-echo -e "Size:\t\t$(ls -lk $EXTNAM.tcz | awk '{print $5}')" >> $TCZINFO
-echo -e "Extension_by:\tpiCorePlayer team: http://www.picoreplayer.org/" >> $TCZINFO
-echo -e "\t\tCompiled for piCore 15.x" >> $TCZINFO
+echo -e "Title:          $EXTNAM.tcz" > $TCZINFO
+echo -e "Description:    SqueezeButtonPi." >> $TCZINFO
+echo -e "Version:        $(grep VERSION $SRCDIR/sbpd.h | awk -F' ' '{printf "%s", $3}')" >> $TCZINFO
+echo -e "Authors:        Joerg Schwieder, Paul Hermann" >> $TCZINFO
+echo -e "Original-site:  https://github.com/coolio107/SqueezeButtonPi-Daemon" >> $TCZINFO
+echo -e "Copying-policy: BSD-3-Clause" >> $TCZINFO
+echo -e "Size:           $(ls -lk $EXTNAM.tcz | awk '{print $5}')" >> $TCZINFO
+echo -e "Extension_by:   piCorePlayer team: http://www.picoreplayer.org/" >> $TCZINFO
+echo -e "Change-log:     2017/02/17 Initial version" >> $TCZINFO
+echo -e "                2018/04/10 Add short/long button press and config file suppurt" >> $TCZINFO
+echo -e "Current:        Update to Version 4.0.0 - Migrate to kernel gpio events" >> $TCZINFO
