@@ -52,5 +52,10 @@ echo -e "Copying-policy: BSD-3-Clause" >> $TCZINFO
 echo -e "Size:           $(ls -lk $EXTNAM.tcz | awk '{print $5}')" >> $TCZINFO
 echo -e "Extension_by:   piCorePlayer team: http://www.picoreplayer.org/" >> $TCZINFO
 echo -e "Change-log:     2017/02/17 Initial version" >> $TCZINFO
-echo -e "                2018/04/10 Add short/long button press and config file suppurt" >> $TCZINFO
-echo -e "Current:        Update to Version 4.0.0 - Migrate to kernel gpio events" >> $TCZINFO
+echo -e "                2017/03/04 Added short/long button press handling" >> $TCZINFO
+echo -e "                2018/04/14 Added configuration-file support and per-button long-press commands" >> $TCZINFO
+echo -e "                2018/04/28 Released version 2.0" >> $TCZINFO
+echo -e "                2019/02/02 Added previous/next track control via encoder" >> $TCZINFO
+echo -e "                2019/09/25 Added pigpio GPIO support and uinput keyboard controls" >> $TCZINFO
+echo -e "                2025/02/02 Restored WiringPi support and added piCorePlayer packaging" >> $TCZINFO
+echo -e "Current:        2026/11/06 Version 4.0.0: event-driven libgpiod GPIO; Raspberry Pi 5/RP1 support" >> $TCZINFO
