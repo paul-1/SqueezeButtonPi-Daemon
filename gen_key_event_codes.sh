@@ -4,7 +4,7 @@
 # Usage: CC=gcc ./gen_key_event_codes.sh > key_event_codes.c
 #
 # Copyright (c) 2026, paul-1 <6473457+paul-1@users.noreply.github.com>
-# Licensed under the terms in the LICENSE file.
+# SPDX-License-Identifier: BSD-3-Clause
 
 set -e
 CC=${CC:-cc}

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
 // Copyright (c) 2026, paul-1 <6473457+paul-1@users.noreply.github.com>
 // All rights reserved.
@@ -9,7 +10,7 @@
 // * Redistributions in binary form must reproduce the above copyright notice,
 //   this list of conditions and the following disclaimer in the documentation
 //   and/or other materials provided with the distribution.
-// * Neither the name of ickStream nor the names of its contributors may be used
+// * Neither the name of the copyright holder nor the names of its contributors may be used
 //   to endorse or promote products derived from this software without specific
 //   prior written permission.
 //

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
 
 EXTNAM=pcp-sbpd
 TMPDIR=/tmp/$EXTNAM
@@ -47,7 +48,7 @@ echo -e "Description:\tSqueezeButtonPi." >> $TCZINFO
 echo -e "Version:\t$(grep VERSION $SRCDIR/sbpd.h | awk -F' ' '{printf "%s", $3}')" >> $TCZINFO
 echo -e "Authors:\tJoerg Schwieder" >> $TCZINFO
 echo -e "Original-site:\thttps://github.com/coolio107/SqueezeButtonPi-Daemon" >> $TCZINFO
-echo -e "Copying-policy:\tGPLv3" >> $TCZINFO
+echo -e "Copying-policy:\tBSD-3-Clause" >> $TCZINFO
 echo -e "Size:\t\t$(ls -lk $EXTNAM.tcz | awk '{print $5}')" >> $TCZINFO
 echo -e "Extension_by:\tpiCorePlayer team: http://www.picoreplayer.org/" >> $TCZINFO
 echo -e "\t\tCompiled for piCore 15.x" >> $TCZINFO
