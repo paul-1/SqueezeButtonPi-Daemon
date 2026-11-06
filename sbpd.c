@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 //
 //  main.c
 //  SqueezeButtonPi
@@ -12,6 +13,7 @@
 //
 //
 //  Copyright (c) 2025, Joerg Schwieder, PenguinLovesMusic.com
+//  Copyright (c) 2026, paul-1 <6473457+paul-1@users.noreply.github.com>
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
@@ -22,7 +24,7 @@
 //   * Redistributions in binary form must reproduce the above copyright
 //     notice, this list of conditions and the following disclaimer in the
 //     documentation and/or other materials provided with the distribution.
-//   * Neither the name of ickStream nor the names of its contributors
+//   * Neither the name of the copyright holder nor the names of its contributors
 //     may be used to endorse or promote products derived from this software
 //     without specific prior written permission.
 //
@@ -65,7 +67,7 @@ static char * MAC;
 //
 //  signal handling
 //
-static volatile int stop_signal;
+static volatile sig_atomic_t stop_signal;
 static void sigHandler( int sig, siginfo_t *siginfo, void *context );
 
 //
@@ -78,9 +80,9 @@ static int sysloglevel = LOG_ALERT;
 //  Argument Parsing
 //
 const char *argp_program_version = USER_AGENT " " VERSION;
-const char *argp_program_bug_address = "<coolio@penguinlovesmusic.com>";
+const char *argp_program_bug_address = "https://forums.lyrion.org/";
 static error_t parse_opt(int key, char *arg, struct argp_state *state);
-static error_t parse_arg( int pi );  //pass the pigpiod interface number
+static error_t parse_arg( int pi );
 //
 //  OPTIONS.  Field 1 in ARGP.
 //  Order of fields: {NAME, KEY, ARG, FLAGS, DOC, GROUP}.
@@ -199,7 +201,7 @@ int main(int argc, char * argv[]) {
 	//
 	int pi_interface = init_GPIO();
 	if ( pi_interface < 0 ) {
-		logerr("Could not connect to pigpiod. Is it running?");
+		logerr("Could not initialize GPIO");
 		return -1;
 	}
 
@@ -210,6 +212,7 @@ int main(int argc, char * argv[]) {
     error_t arg_err = parse_arg( pi_interface );
 
 	if ( arg_err != 0 ) {
+       shutdown_GPIO(pi_interface);
        return -2;
    }
 
@@ -237,8 +240,10 @@ int main(int argc, char * argv[]) {
     //
     if (!(configured_parameters & SBPD_cfg_MAC)) {
         MAC = find_mac();
-        if (!MAC)
+        if (!MAC) {
+            shutdown_GPIO(pi_interface);
             return -1;  // no MAC, no control
+        }
         discovered_parameters |= SBPD_cfg_MAC;
     }
 
@@ -254,6 +259,8 @@ int main(int argc, char * argv[]) {
 	}
 
     init_comm(MAC);
+    if (!stop_signal && start_GPIO() < 0)
+        stop_signal = 1;
 
     //
     //
@@ -262,7 +269,7 @@ int main(int argc, char * argv[]) {
     //
 
 	loginfo("Starting main loop polling");
-    while( !stop_signal ) {
+    while( !stop_signal && !GPIO_failed() ) {
         //
         //  Poll the server discovery
         //
@@ -281,14 +288,14 @@ int main(int argc, char * argv[]) {
     //
     //  Shutdown server communication
     //
+    shutdown_GPIO(pi_interface);
+    bool gpio_error = GPIO_failed();
     shutdown_comm();
 	if (keyboard_inuse) { 
 		disconnect_uinput();
 	}
 
-	shutdown_GPIO( pi_interface );
-
-    return 0;
+    return gpio_error || stop_signal == 1 ? 1 : 0;
 }
 
 //
@@ -452,7 +459,8 @@ static error_t parse_arg( int pi ) {
                         logerr("Encoder argument error");
                         return ARGP_ERR_UNKNOWN;
                     }
-                    setup_encoder_ctrl( pi, cmd, p1, p2, mode);
+                    if (setup_encoder_ctrl(pi, cmd, p1, p2, mode) != 0)
+                        return ARGP_ERR_UNKNOWN;
                 }
                     break;
                 case 'b': {
@@ -480,7 +488,8 @@ static error_t parse_arg( int pi ) {
                         logerr("Button argument error");
                         return ARGP_ERR_UNKNOWN;
                     }
-                    setup_button_ctrl(pi, cmd, pin, resist, pressed, cmd_long, long_time);
+                    if (setup_button_ctrl(pi, cmd, pin, resist, pressed, cmd_long, long_time) != 0)
+                        return ARGP_ERR_UNKNOWN;
                 }
                     break;
                     

@@ -8,6 +8,7 @@ Rotary encoders or rotary-push-encoders can be used for volume, buttons (and the
 ## COPYRIGHT / LICENSE
 
 Copyright (c) 2017, Joerg Schwieder, PenguinLovesMusic.com
+Copyright (c) 2026, paul-1 <6473457+paul-1@users.noreply.github.com>
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -18,7 +19,7 @@ modification, are permitted provided that the following conditions are met:
    * Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-   * Neither the name of ickStream nor the names of its contributors
+   * Neither the name of the copyright holder nor the names of its contributors
      may be used to endorse or promote products derived from this software
      without specific prior written permission.
 
@@ -35,7 +36,19 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Dependencies
 
-SqueezeButtonPi uses [pigpio](https://github.com/joan2937/pigpio "PiGpio") and libCurl
+SqueezeButtonPi uses libCurl and **libgpiod 2.0.2 or newer**. It requires Linux
+kernel 5.10 or newer. Building requires a C compiler, make, pkg-config, and the
+libCurl and libgpiod development files.
+
+### Supported boards
+
+All Raspberry Pi models are supported, including Pi 1/2/3/4/5, Pi 400/500,
+Zero, Zero W, Zero 2 W and Compute Modules. Pins use BCM GPIO numbering.
+
+sbpd finds the Raspberry Pi GPIO chip automatically. To select a chip manually,
+set `SBPD_GPIO_CHIP`, for example:
+
+`SBPD_GPIO_CHIP=/dev/gpiochip0 sbpd ...`
 
 ## Configuration
 
@@ -127,10 +140,12 @@ Arguments are a comma-separated list of configuration parameters:
 
     Uses the linux uinput kernel module.  Make sure to load it with sudo modprobe uinput.
     Keycode definitions can be found: https://github.com/raspberrypi/linux/blob/rpi-4.19.y/include/uapi/linux/input-event-codes.h
+    Key names (codes 0-254) are taken from the build system's linux/input-event-codes.h.
 
 ## Security
 
-As long as /dev/uinput permissions are set user writable, sbpd does not need to run with root permissions.
+With appropriate `/dev/gpiochipN` permissions (and `/dev/uinput` permissions when
+keyboard commands are used), sbpd does not need root permissions.
 
 ## Limitations
 

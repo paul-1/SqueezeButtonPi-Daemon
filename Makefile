@@ -1,7 +1,14 @@
 CC = gcc
-CFLAGS += -Wall -fPIC -std=gnu99 -s -I/usr/local/include -Wl,-rpath,/usr/local/lib
-LDFLAGS = -L./lib -Wl,-rpath,/usr/local/lib -lcurl -lwiringPi
-STATIC_LDFLAGS = -lpthread -ldl -lrt -lssl -lcrypto -lz -lm -lidn2 -lto -lwiringPi /usr/local/lib/libcurl.a
+PKG_CONFIG ?= pkg-config
+GPIOD_VERSION_OK := $(shell $(PKG_CONFIG) --atleast-version=2.0.2 libgpiod && echo yes)
+ifneq ($(MAKECMDGOALS),clean)
+ifneq ($(GPIOD_VERSION_OK),yes)
+$(error libgpiod >= 2.0.2 development files and pkg-config are required)
+endif
+endif
+CFLAGS += -Wall -fPIC -std=gnu99 -s -pthread -I/usr/local/include -Wl,-rpath,/usr/local/lib $(shell $(PKG_CONFIG) --cflags libgpiod)
+LDFLAGS = -L./lib -Wl,-rpath,/usr/local/lib -lcurl -pthread $(shell $(PKG_CONFIG) --libs libgpiod)
+STATIC_LDFLAGS = -lpthread -ldl -lrt -lssl -lcrypto -lz -lm -lidn2 -lto /usr/local/lib/libcurl.a $(shell $(PKG_CONFIG) --libs libgpiod)
 
 EXECUTABLE = sbpd
 EXECUTABLE-STATIC_CURL = sbpd-static
@@ -25,8 +32,11 @@ $(EXECUTABLE-STATIC_CURL): $(OBJECTS)
 
 $(OBJECTS): $(DEPS)
 
+key_event_codes.c: gen_key_event_codes.sh
+	CC="$(CC)" ./gen_key_event_codes.sh > $@.tmp && mv $@.tmp $@
+
 .c.o:
 	$(CC) $(CFLAGS) $< -c -o $@
 
 clean:
-	rm -f $(OBJECTS) $(EXECUTABLE) $(EXECUTABLE-STATIC_CURL)
+	rm -f $(OBJECTS) $(EXECUTABLE) $(EXECUTABLE-STATIC_CURL) key_event_codes.c key_event_codes.c.tmp
